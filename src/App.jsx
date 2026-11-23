@@ -57,7 +57,6 @@ function ProductCard({ product, onAdd, onView }) {
       </div>
       <div className="product-info">
         <div className="product-name-price"><h3><button className="product-title-link" type="button" onClick={() => onView(product)}>{product.name}</button></h3><span className="product-price">{formatPrice(product.price)}</span></div>
-        {product.description && <p className="product-description">{product.description}</p>}
         <button className="product-details-link" type="button" onClick={() => onView(product)}>View product details <span aria-hidden="true">→</span></button>
       </div>
     </article>

@@ -104,7 +104,6 @@ h1, h2, h3, p { margin-top: 0; }
 .product-title-link { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; }
 .product-title-link:hover { color: var(--green); }
 .product-price { flex: 0 0 auto; color: var(--green); font-size: 13px; font-weight: 700; }
-.product-description { margin: 7px 0 0; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.6; }
 .product-details-link { margin-top: 12px; padding: 0; display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--green); cursor: pointer; font-size: 11px; font-weight: 700; }
 .product-details-link:hover { color: var(--coral); }
 .empty-state { padding: 70px 15px; color: var(--muted); text-align: center; }
