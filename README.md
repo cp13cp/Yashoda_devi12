@@ -25,4 +25,10 @@ For production, set `NODE_ENV=production`, set `CLIENT_URL` to the site's HTTPS 
 
 The repository includes a Render Blueprint in `render.yaml`. In Render, create a **Blueprint** and select `cp13cp/Yashoda_devi12`. Enter the MongoDB URI, admin credentials, UPI ID, and SMTP settings when prompted; Render generates `SESSION_SECRET`.
 
-Set `CLIENT_URL` to the exact HTTPS origin Render assigns to the service (for example, `https://rajendra-puja-store.onrender.com`). The app uses that value to allow secure same-site API requests. Also allow the Render service's outbound IP addresses in MongoDB Atlas Network Access. The Blueprint builds the frontend and serves it from the Node web service.
+If you serve the frontend from Render, set `CLIENT_URL` to the exact HTTPS origin Render assigns to the service. When using Netlify, use the Netlify origin as described below. Also allow the Render service's outbound IP addresses in MongoDB Atlas Network Access. The Blueprint can build and serve the frontend from the Node web service.
+
+## Deploy the frontend on Netlify
+
+The `netlify.toml` file builds the React app, publishes `dist`, proxies `/api/*` requests to `https://yashoda-devi12.onrender.com`, and provides SPA routing. Connect `cp13cp/Yashoda_devi12` on the `main` branch to Netlify; the build settings are read from this file.
+
+After Netlify assigns the site URL, update `CLIENT_URL` in the Render service's environment to that exact HTTPS origin (for example, `https://your-site.netlify.app`) and redeploy the Render service. This is required for the API's credentialed CORS requests.
