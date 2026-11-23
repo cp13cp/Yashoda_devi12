@@ -710,6 +710,9 @@ const mailTransport = process.env.SMTP_HOST
       auth: process.env.SMTP_USER
         ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
         : undefined,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     })
   : null;
 
@@ -1360,13 +1363,17 @@ app.post("/api/orders", requireUser, async (request, response, next) => {
       items,
       subtotal,
     });
-    let emailSent = false;
-    try {
-      emailSent = await sendOrderConfirmation(order, request.user);
-    } catch (emailError) {
-      console.error("Order confirmation email failed:", emailError);
+    const emailStatus = mailTransport ? "sending" : "not_configured";
+    if (mailTransport) {
+      void sendOrderConfirmation(order, request.user)
+        .then(() => {
+          console.info(`Order confirmation email sent for order ${order._id}`);
+        })
+        .catch((emailError) => {
+          console.error("Order confirmation email failed:", emailError);
+        });
     }
-    response.status(201).json({ ...order.toObject(), emailSent });
+    response.status(201).json({ ...order.toObject(), emailStatus });
   } catch (error) {
     next(error);
   }

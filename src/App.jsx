@@ -792,9 +792,13 @@ export default function App() {
       });
       setCartToast({
         kind: "order",
-        title: order.emailSent
-          ? "Order confirmed — details sent to your email"
-          : "Order confirmed — email could not be sent; please contact the store",
+        title: order.emailStatus === "sending"
+          ? "Order confirmed — email confirmation is being attempted"
+          : order.emailStatus === "not_configured"
+            ? "Order confirmed — email is not configured; please contact the store"
+            : order.emailSent
+              ? "Order confirmed — details sent to your email"
+              : "Order confirmed",
       });
       setCart(new Map());
       setShowCart(false);
