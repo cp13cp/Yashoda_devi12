@@ -20,3 +20,9 @@ The admin dashboard manages the products stored in MongoDB. Customers sign in to
 The floating WhatsApp button is for customer help at **+91 97708 57704**; orders are placed through the website checkout. Recent-purchase notifications show a customer's name and city only when they opt in at checkout, and only for eligible purchases from the last 15 minutes.
 
 For production, set `NODE_ENV=production`, set `CLIENT_URL` to the site's HTTPS origin, use a protected MongoDB deployment, configure email and payment settings, run `npm run build`, then run `npm start`. Do not commit `.env`; `.env.example` contains placeholders only.
+
+## Deploy on Render
+
+The repository includes a Render Blueprint in `render.yaml`. In Render, create a **Blueprint** and select `cp13cp/Yashoda_devi12`. Enter the MongoDB URI, admin credentials, UPI ID, and SMTP settings when prompted; Render generates `SESSION_SECRET`.
+
+Set `CLIENT_URL` to the exact HTTPS origin Render assigns to the service (for example, `https://rajendra-puja-store.onrender.com`). The app uses that value to allow secure same-site API requests. Also allow the Render service's outbound IP addresses in MongoDB Atlas Network Access. The Blueprint builds the frontend and serves it from the Node web service.
