@@ -661,8 +661,20 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 const COOKIE_NAME = "yashoda_admin_session";
 
-const CLIENT_URL =
-  process.env.CLIENT_URL || "http://127.0.0.1:5173";
+// ============================================
+// ALLOWED FRONTEND DOMAINS (CORS)
+// ============================================
+
+const CLIENT_URLS = new Set([
+  "https://rajendrapujastore.netlify.app",
+  "https://rajendrapujastore.in",
+  "https://www.rajendrapujastore.in",
+
+  ...(process.env.CLIENT_URL || "http://127.0.0.1:5173")
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
+]);
 
 app.disable("x-powered-by");
 
@@ -677,7 +689,11 @@ app.use(
 app.use(
   cors({
     origin(requestOrigin, callback) {
-      if (!requestOrigin || /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(requestOrigin) || requestOrigin === CLIENT_URL) {
+      if (
+        !requestOrigin ||
+        /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(requestOrigin) ||
+        CLIENT_URLS.has(requestOrigin)
+      ) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
@@ -1800,6 +1816,12 @@ app.delete(
 // ============================================
 
 app.use((error, _request, response, _next) => {
+  if (error?.message === "Not allowed by CORS") {
+    return response.status(403).json({
+      error: "This website is not allowed to access the store API.",
+    });
+  }
+
   if (error instanceof multer.MulterError) {
     const message =
       error.code === "LIMIT_FILE_SIZE"

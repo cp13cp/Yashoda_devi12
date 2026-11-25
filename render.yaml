@@ -12,7 +12,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: CLIENT_URL
-        sync: false
+        value: "https://rajendrapujastore.netlify.app,https://rajendrapujastore.in"
       - key: MONGODB_URI
         sync: false
       - key: ADMIN_USERNAME
