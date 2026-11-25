@@ -10,6 +10,27 @@ async function api(path, options = {}) {
   return body;
 }
 
+let razorpayScriptPromise;
+
+function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve();
+  if (razorpayScriptPromise) return razorpayScriptPromise;
+
+  razorpayScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => {
+      script.remove();
+      razorpayScriptPromise = null;
+      reject(new Error("Secure payment checkout could not be loaded. Please try again."));
+    };
+    document.body.appendChild(script);
+  });
+  return razorpayScriptPromise;
+}
+
 function Icon({ name }) {
   if (name === "bag") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 12H4L5 8Z" /><path d="M9 9V6a3 3 0 0 1 6 0v3" /></svg>;
@@ -87,15 +108,18 @@ function ProductDetailsDialog({ product, onClose, onAdd }) {
   );
 }
 
-function AdminDialog({ onClose, onProductsChange }) {
+function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [form, setForm] = useState({ name: "", price: "", category: "", description: "" });
+  const [categoryForm, setCategoryForm] = useState({ name: "" });
   const [editingProductId, setEditingProductId] = useState(null);
   const [image, setImage] = useState(null);
+  const [categoryImage, setCategoryImage] = useState(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -107,6 +131,12 @@ function AdminDialog({ onClose, onProductsChange }) {
     setProducts(items);
     onProductsChange(items);
   }, [onProductsChange]);
+
+  const refreshCategories = useCallback(async () => {
+    const items = await api("/api/categories");
+    setCategories(items);
+    onCategoriesChange(items);
+  }, [onCategoriesChange]);
 
   useEffect(() => {
     let active = true;
@@ -126,10 +156,11 @@ function AdminDialog({ onClose, onProductsChange }) {
   useEffect(() => {
     if (!authenticated) return;
     refreshProducts().catch((requestError) => setError(requestError.message));
+    refreshCategories().catch((requestError) => setError(requestError.message));
     api("/api/admin/dashboard")
       .then(setDashboard)
       .catch((requestError) => setError(requestError.message));
-  }, [authenticated, refreshProducts]);
+  }, [authenticated, refreshCategories, refreshProducts]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -172,6 +203,34 @@ function AdminDialog({ onClose, onProductsChange }) {
       productForm.reset();
       await refreshProducts();
       setNotice(isEditing ? "Product updated." : "Product added to your MongoDB collection.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function handleSaveCategory(event) {
+    event.preventDefault();
+    const categoryFormElement = event.currentTarget;
+    if (!categoryImage) {
+      setError("Choose a category image to upload.");
+      return;
+    }
+
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      const data = new FormData();
+      data.append("name", categoryForm.name);
+      data.append("image", categoryImage);
+      await api("/api/categories", { method: "PUT", body: data });
+      setCategoryForm({ name: "" });
+      setCategoryImage(null);
+      categoryFormElement.reset();
+      await refreshCategories();
+      setNotice("Category image saved.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -297,10 +356,11 @@ function AdminDialog({ onClose, onProductsChange }) {
           </form>
         ) : (
           <>
-            <div className="admin-toolbar"><p>Product listings are saved in MongoDB.</p><button className="text-link" type="button" onClick={handleLogout} disabled={pending}>Sign out</button></div>
+            <div className="admin-toolbar"><p>Products and category photos are saved in MongoDB.</p><button className="text-link" type="button" onClick={handleLogout} disabled={pending}>Sign out</button></div>
             <div className="admin-tabs" role="tablist">
               <button type="button" className={adminTab === "dashboard" ? "active" : ""} onClick={() => setAdminTab("dashboard")}>Dashboard</button>
               <button type="button" className={adminTab === "products" ? "active" : ""} onClick={() => setAdminTab("products")}>Products</button>
+              <button type="button" className={adminTab === "categories" ? "active" : ""} onClick={() => setAdminTab("categories")}>Categories</button>
               <button type="button" className={adminTab === "orders" ? "active" : ""} onClick={() => setAdminTab("orders")}>Orders</button>
             </div>
             {adminTab === "dashboard" && (
@@ -330,7 +390,7 @@ function AdminDialog({ onClose, onProductsChange }) {
                     <label>Price (₹)<input type="number" min="1" max="10000000" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} required placeholder="499" /></label>
                   </div>
                   <div className="form-row">
-                    <label>Category<input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} required maxLength={40} placeholder="Home & living" /></label>
+                    <label>Category<input list="admin-category-options" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} required maxLength={40} placeholder="Puja samagri" /><datalist id="admin-category-options">{categories.map((item) => <option key={item.name} value={item.name} />)}</datalist></label>
                     <label>Photo (JPG, PNG, WebP · up to 3 MB)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setImage(event.target.files?.[0] || null)} />{editingProductId && <small>Leave blank to keep the current photo.</small>}</label>
                   </div>
                   <label>Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} maxLength={400} rows="2" placeholder="A short note about what makes it special" /></label>
@@ -356,6 +416,28 @@ function AdminDialog({ onClose, onProductsChange }) {
                 </div>
               </>
             )}
+            {adminTab === "categories" && (
+              <>
+                <form className="product-form" onSubmit={handleSaveCategory}>
+                  <h3>Add or update a category</h3>
+                  <p className="category-form-note">Upload a square photo to show this category in a circle on the shop page. Use the same name to replace its image.</p>
+                  <label>Category name<input list="admin-category-options" value={categoryForm.name} onChange={(event) => setCategoryForm({ name: event.target.value })} required maxLength={40} placeholder="Puja samagri" /><datalist id="admin-category-options">{categories.map((item) => <option key={item.name} value={item.name} />)}</datalist></label>
+                  <label>Category photo (JPG, PNG, WebP · up to 3 MB)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setCategoryImage(event.target.files?.[0] || null)} required /></label>
+                  {error && <p className="form-message" role="alert">{error}</p>}
+                  {notice && <p className="form-message success" role="status">{notice}</p>}
+                  <button className="button button-dark" type="submit" disabled={pending}>{pending ? "Saving…" : "Save category image"} <span aria-hidden="true">↗</span></button>
+                </form>
+                <div className="admin-products-heading"><h3>Shop categories</h3><span>{categories.length} {categories.length === 1 ? "category" : "categories"}</span></div>
+                <div className="admin-products">
+                  {categories.length ? categories.map((item) => (
+                    <div className="admin-product-row admin-category-row" key={item.name}>
+                      {item.imageUrl ? <img className="admin-thumb admin-category-thumb" src={item.imageUrl} alt="" /> : <span className="admin-category-placeholder">✳</span>}
+                      <div><strong>{item.name}</strong><span>{item.imageUrl ? "Image uploaded" : "No image yet"}</span></div>
+                    </div>
+                  )) : <p className="admin-empty">Add an image for a category. Categories used by products appear here automatically.</p>}
+                </div>
+              </>
+            )}
             {adminTab === "orders" && (
               <>
                 {error && <p className="form-message" role="alert">{error}</p>}
@@ -365,7 +447,7 @@ function AdminDialog({ onClose, onProductsChange }) {
                   <article className="admin-order-card" key={order._id}>
                     <div className="admin-order-head"><div><strong>#{order._id.slice(-6).toUpperCase()}</strong><span>{order.user?.name || order.customerName} · {order.user?.email || ""}</span></div><strong>{formatPrice(order.subtotal)}</strong></div>
                     <div className="admin-order-items">{order.items.map((item, index) => <span key={index}>{item.name} × {item.quantity}</span>)}</div>
-                    <div className="admin-cod-meta"><strong>{order.paymentMethod === "upi" ? "UPI" : "COD"}</strong><span>{order.customerPhone}</span><small>{order.deliveryAddress}</small>{order.utr && <small>UTR: {order.utr}</small>}</div>
+                    <div className="admin-cod-meta"><strong>{order.paymentMethod === "razorpay" ? "Razorpay" : order.paymentMethod === "upi" ? "UPI" : "COD"}</strong><span>{order.customerPhone}</span><small>{order.deliveryAddress}</small>{order.utr && <small>UTR: {order.utr}</small>}</div>
                     <select value={order.status} onChange={(event) => updateOrderStatus(order._id, event.target.value)} aria-label={`Status for order ${order._id.slice(-6)}`}>
                       <option value="new">Pending</option><option value="confirmed">Confirmed</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
                     </select>
@@ -386,7 +468,7 @@ function AdminDialog({ onClose, onProductsChange }) {
   );
 }
 
-function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isAuthenticated }) {
+function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isAuthenticated, isProcessing }) {
   const entries = [...items.entries()];
   const subtotal = entries.reduce((sum, [id, item]) => sum + item.product.price * item.quantity, 0);
   const [phone, setPhone] = useState("");
@@ -394,22 +476,11 @@ function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isA
   const [city, setCity] = useState("");
   const [showPublicPurchase, setShowPublicPurchase] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("cod");
-  const [upiPayment, setUpiPayment] = useState(null);
-
-  useEffect(() => {
-    if (paymentMethod !== "upi" || !entries.length || !isAuthenticated) return;
-    api("/api/payment/upi-qr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: subtotal }),
-    }).then(setUpiPayment).catch((requestError) => setCheckoutError(requestError.message));
-  }, [paymentMethod, isAuthenticated, subtotal, entries.length]);
 
   return (
-    <div className="modal-backdrop cart-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="modal-backdrop cart-backdrop" onMouseDown={(event) => { if (!isProcessing && event.target === event.currentTarget) onClose(); }}>
       <aside className="drawer cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title">
-        <div className="drawer-header"><div><span className="eyebrow">PUJA ESSENTIALS</span><h2 id="cart-title">Your basket <span>({entries.reduce((sum, [, item]) => sum + item.quantity, 0)})</span></h2></div><button className="close-button" type="button" onClick={onClose} aria-label="Close basket">×</button></div>
+        <div className="drawer-header"><div><span className="eyebrow">PUJA ESSENTIALS</span><h2 id="cart-title">Your basket <span>({entries.reduce((sum, [, item]) => sum + item.quantity, 0)})</span></h2></div><button className="close-button" type="button" onClick={onClose} disabled={isProcessing} aria-label="Close basket">×</button></div>
         {entries.length ? <div className="cart-items">{entries.map(([id, item]) => (
           <div className="cart-row" key={id}>
             <ProductImage product={item.product} className="cart-thumb" />
@@ -421,7 +492,7 @@ function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isA
         ))}</div> : <div className="cart-empty"><span>♡</span><p>Your puja basket is waiting for something special.</p><button className="text-link" type="button" onClick={onClose}>Browse puja essentials ↗</button></div>}
         {entries.length > 0 && <div className="cart-footer">
           <div className="cart-subtotal"><span>Subtotal</span><strong>{formatPrice(subtotal)}</strong></div>
-          <div className="cod-checkout">
+          <div className="checkout-details">
             <label>Delivery phone<input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+91 98765 43210" maxLength={20} /></label>
             <label>Delivery address<textarea value={address} onChange={(event) => setAddress(event.target.value)} placeholder="House / Flat, Area, City, PIN code" rows="2" maxLength={500} /></label>
             <label className="recent-purchase-consent">
@@ -429,33 +500,10 @@ function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isA
               <span>I agree to display my full name and city publicly in a recent-purchase popup for up to 15 minutes.</span>
             </label>
             {showPublicPurchase && <label>City shown in popup<input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Your city" maxLength={80} /></label>}
-            <div className="payment-options" role="radiogroup" aria-label="Payment method">
-              <button type="button" className={paymentMethod === "cod" ? "payment-option active" : "payment-option"} onClick={() => setPaymentMethod("cod")} role="radio" aria-checked={paymentMethod === "cod"}>
-                <span aria-hidden="true">₹</span><div><strong>Cash on Delivery</strong><small>Pay when your order arrives</small></div><b>{paymentMethod === "cod" ? "✓" : ""}</b>
-              </button>
-              <button type="button" className={paymentMethod === "upi" ? "payment-option active" : "payment-option"} onClick={() => setPaymentMethod("upi")} role="radio" aria-checked={paymentMethod === "upi"}>
-                <span aria-hidden="true">UPI</span><div><strong>UPI / QR Payment</strong><small>Scan and pay securely</small></div><b>{paymentMethod === "upi" ? "✓" : ""}</b>
-              </button>
-            </div>
-            {paymentMethod === "upi" && (
-              <div className="upi-payment">
-                {!isAuthenticated ? (
-                  <div className="upi-signin-required" role="status">
-                    <span className="upi-signin-icon" aria-hidden="true">↗</span>
-                    <div><strong>Sign in to generate your QR</strong><p>Please sign in first to create a payment QR for this order.</p></div>
-                    <button className="button button-dark" type="button" onClick={onRequireAuth}>Sign in</button>
-                  </div>
-                ) : upiPayment ? (
-                  <>
-                    <img src={upiPayment.qrDataUrl} alt={`UPI QR for ${formatPrice(subtotal)}`} />
-                    <div><strong>Pay {formatPrice(subtotal)}</strong><span>{upiPayment.upiId}</span><a href={upiPayment.upiUrl}>Open UPI app</a></div>
-                  </>
-                ) : <p className="account-empty">Generating payment QR…</p>}
-              </div>
-            )}
+            <div className="cod-option"><span aria-hidden="true">✓</span><div><strong>Secure online payment</strong><small>Pay with Razorpay. Your order is created after payment is verified.</small></div></div>
           </div>
           {checkoutError && <p className="form-message" role="alert">{checkoutError}</p>}
-          <button className="button button-dark checkout-button" onClick={() => {
+          <button className="button button-dark checkout-button" disabled={isProcessing} onClick={() => {
             if (!isAuthenticated) {
               onPlaceOrder ? onPlaceOrder(null) : null;
               return;
@@ -464,9 +512,9 @@ function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isA
             if (address.trim().length < 10) { setCheckoutError("Enter a complete delivery address."); return; }
             if (showPublicPurchase && !city.trim()) { setCheckoutError("Enter your city to opt in to the public purchase popup."); return; }
             setCheckoutError("");
-            onPlaceOrder ? onPlaceOrder({ phone: phone.trim(), address: address.trim(), paymentMethod, city: showPublicPurchase ? city.trim() : "", showPublicPurchase }) : null;
-          }}><span>◉</span> {isAuthenticated ? `Place ${paymentMethod === "upi" ? "UPI" : "COD"} Order` : "Sign in to place order"} <span aria-hidden="true">↗</span></button>
-          <span className="secure-note">{paymentMethod === "upi" ? "Pay using the QR; the store will verify your payment." : "Pay in cash when your order arrives."}</span>
+            onPlaceOrder?.({ phone: phone.trim(), address: address.trim(), city: showPublicPurchase ? city.trim() : "", showPublicPurchase })?.catch((requestError) => setCheckoutError(requestError.message));
+          }}><span>◉</span> {isProcessing ? "Opening secure checkout…" : isAuthenticated ? `Pay ${formatPrice(subtotal)} & place order` : "Sign in to place order"} <span aria-hidden="true">↗</span></button>
+          <span className="secure-note">Your order is placed only after Razorpay confirms payment.</span>
         </div>}
       </aside>
     </div>
@@ -597,7 +645,7 @@ function AccountDrawer({ user, onClose, onLogout }) {
             <article className="order-card" key={order._id}>
               <div className="order-card-head"><div><strong>Order #{order._id.slice(-6).toUpperCase()}</strong><span>{new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month:"short", year:"numeric" })}</span></div><span className={`order-status status-${order.status}`}>{order.status === "new" ? "Pending" : order.status}</span></div>
               <div className="order-items">{order.items.map((item, index) => <div key={`${item.productId}-${index}`}><span>{item.name} × {item.quantity}</span><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}</div>
-              <div className="order-meta"><span>{order.paymentMethod === "cod" ? "Cash on Delivery" : `UPI • ${order.paymentStatus || "pending"}`}</span>{order.deliveryAddress && <span>{order.deliveryAddress}</span>}</div>
+              <div className="order-meta"><span>{order.paymentMethod === "razorpay" ? "Razorpay • paid" : order.paymentMethod === "cod" ? "Cash on Delivery" : `UPI • ${order.paymentStatus || "pending"}`}</span>{order.deliveryAddress && <span>{order.deliveryAddress}</span>}</div>
               <div className="order-total"><span>Total</span><strong>{formatPrice(order.subtotal)}</strong></div>
             </article>
           )) : <div className="account-empty"><span>♡</span><p>No orders yet.</p></div>}
@@ -614,7 +662,7 @@ function AddToCartToast({ product, onClose, onViewBag }) {
       <span className="cart-toast-icon" aria-hidden="true">✓</span>
       <div className="cart-toast-copy">
         <strong>{product.kind === "order" ? product.title : "Added to your basket"}</strong>
-        <span>{product.kind === "order" ? "Cash on Delivery" : product.name}</span>
+        <span>{product.kind === "order" ? "Payment verified" : product.name}</span>
       </div>
       {product.kind !== "order" && <button className="cart-toast-action" type="button" onClick={onViewBag}>View basket</button>}
       <button className="cart-toast-close" type="button" onClick={onClose} aria-label="Close notification">×</button>
@@ -686,6 +734,7 @@ function RecentPurchaseToast({ suspended }) {
 
 export default function App() {
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [cart, setCart] = useState(() => new Map());
@@ -697,6 +746,7 @@ export default function App() {
   const [showAccount, setShowAccount] = useState(false);
   const [checkoutAfterLogin, setCheckoutAfterLogin] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [paymentPending, setPaymentPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -705,12 +755,19 @@ export default function App() {
     setError("");
   }, []);
 
+  const refreshCategories = useCallback((items) => {
+    setCategories(items);
+  }, []);
+
   useEffect(() => {
     let active = true;
     api("/api/products")
       .then((items) => { if (active) setProducts(items); })
       .catch((requestError) => { if (active) setError(requestError.message); })
       .finally(() => { if (active) setLoading(false); });
+    api("/api/categories")
+      .then((items) => { if (active) setCategories(items); })
+      .catch((requestError) => { if (active) setError(requestError.message); });
     return () => { active = false; };
   }, []);
 
@@ -745,7 +802,10 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [cartToast]);
 
-  const categories = useMemo(() => ["All", ...new Set(products.map((product) => product.category))], [products]);
+  const categoryNames = useMemo(
+    () => [...new Set([...categories.map((item) => item.name), ...products.map((product) => product.category)])],
+    [categories, products],
+  );
   const visibleProducts = useMemo(() => products.filter((product) => {
     const matchesCategory = category === "All" || product.category === category;
     const matchesQuery = `${product.name} ${product.category} ${product.description}`.toLowerCase().includes(query.trim().toLowerCase());
@@ -780,15 +840,51 @@ export default function App() {
       setShowAuth(true);
       return;
     }
+    if (!checkout) return;
+
+    setPaymentPending(true);
     try {
       const items = [...cart.values()].map((item) => ({
         id: item.product.id,
         quantity: item.quantity,
       }));
-      const order = await api("/api/orders", {
+      const paymentOrder = await api("/api/payment/razorpay/order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, phone: checkout.phone, address: checkout.address, paymentMethod: checkout.paymentMethod, city: checkout.city, showPublicPurchase: checkout.showPublicPurchase }),
+        body: JSON.stringify({ items, phone: checkout.phone, address: checkout.address, city: checkout.city, showPublicPurchase: checkout.showPublicPurchase }),
+      });
+      await loadRazorpayCheckout();
+      if (typeof window.Razorpay !== "function") {
+        throw new Error("Secure payment checkout is unavailable. Please try again.");
+      }
+
+      const payment = await new Promise((resolve, reject) => {
+        const razorpay = new window.Razorpay({
+          key: paymentOrder.keyId,
+          amount: paymentOrder.amount,
+          currency: paymentOrder.currency,
+          name: "Rajendra Puja Store",
+          description: "Puja essentials",
+          order_id: paymentOrder.razorpayOrderId,
+          prefill: { name: user.name, email: user.email, contact: checkout.phone },
+          theme: { color: "#365d43" },
+          modal: { ondismiss: () => reject(new Error("Payment was cancelled. No order has been placed.")) },
+          handler: resolve,
+        });
+        razorpay.on("payment.failed", (result) => {
+          reject(new Error(result.error?.description || "Payment failed. No order has been placed."));
+        });
+        razorpay.open();
+      });
+
+      const order = await api("/api/payment/razorpay/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          razorpay_order_id: payment.razorpay_order_id,
+          razorpay_payment_id: payment.razorpay_payment_id,
+          razorpay_signature: payment.razorpay_signature,
+        }),
       });
       setCartToast({
         kind: "order",
@@ -802,8 +898,8 @@ export default function App() {
       });
       setCart(new Map());
       setShowCart(false);
-    } catch (requestError) {
-      setError(requestError.message);
+    } finally {
+      setPaymentPending(false);
     }
   }
 
@@ -820,7 +916,7 @@ export default function App() {
 
   return (
     <>
-      <div className="announcement"><span>Shubh Labh · Puja essentials for every sacred moment</span><span className="announcement-dot">✳</span><span>COD & secure UPI checkout</span></div>
+      <div className="announcement"><span>Shubh Labh · Puja essentials for every sacred moment</span><span className="announcement-dot">✳</span><span>Secure online payments</span></div>
       <header className="site-header">
         <a className="brand" href="#" aria-label="Rajendra Puja Store home"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a>
         <nav className="main-nav" aria-label="Main navigation"><a href="#shop">Puja essentials</a><a href="#story">Our promise</a></nav>
@@ -838,10 +934,26 @@ export default function App() {
           <div className="hero-art" aria-label="A glowing diya for your daily worship"><div className="hero-art-image" /><div className="puja-mandala" aria-hidden="true">✺</div><div className="puja-diya" aria-hidden="true">🪔</div><div className="image-stamp"><span>SHUBH<br />LABH</span><span className="stamp-sparkle">✳</span></div><div className="hero-caption"><span>ॐ</span><span>Bring home a little more devotion</span></div></div>
           <div className="hero-side-label">A LITTLE DEVOTION IN EVERY DETAIL</div>
         </section>
-        <section className="promise-strip" id="story" aria-label="Our promise"><div><span className="promise-icon">✳</span><span>Essentials for daily puja & festivals</span></div><div><span className="promise-icon">♡</span><span>Personal service, always</span></div><div><span className="promise-icon">↗</span><span>COD & secure online checkout</span></div></section>
+        <section className="promise-strip" id="story" aria-label="Our promise"><div><span className="promise-icon">✳</span><span>Essentials for daily puja & festivals</span></div><div><span className="promise-icon">♡</span><span>Personal service, always</span></div><div><span className="promise-icon">↗</span><span>Secure online checkout</span></div></section>
         <section className="shop-section" id="shop">
           <div className="section-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> RAJENDRA PUJA STORE</span><h2>Puja essentials for <em>every ritual.</em></h2></div><label className="search-box"><Icon name="search" /><input type="search" placeholder="Search diya, incense, puja samagri..." aria-label="Search puja products" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
-          <div className="shop-toolbar"><div className="category-list" aria-label="Filter by category">{categories.map((item) => <button className={`category-chip${category === item ? " active" : ""}`} type="button" key={item} onClick={() => setCategory(item)} aria-pressed={category === item}>{item}</button>)}</div><span className="product-total">{visibleProducts.length} {visibleProducts.length === 1 ? "good thing" : "good things"}</span></div>
+          <div className="shop-toolbar">
+            <div className="category-list" aria-label="Filter by category">
+              <button className={`category-chip${category === "All" ? " active" : ""}`} type="button" onClick={() => setCategory("All")} aria-pressed={category === "All"}>
+                <span className="category-circle category-all" aria-hidden="true">✳</span><span className="category-name">All</span>
+              </button>
+              {categoryNames.map((name) => {
+                const item = categories.find((entry) => entry.name === name);
+                return (
+                  <button className={`category-chip${category === name ? " active" : ""}`} type="button" key={name} onClick={() => setCategory(name)} aria-pressed={category === name}>
+                    {item?.imageUrl ? <img className="category-circle" src={item.imageUrl} alt="" loading="lazy" /> : <span className="category-circle category-placeholder" aria-hidden="true">✳</span>}
+                    <span className="category-name">{name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <span className="product-total">{visibleProducts.length} {visibleProducts.length === 1 ? "good thing" : "good things"}</span>
+          </div>
           {error && <div className="shop-message" role="alert">{error} <button type="button" onClick={() => window.location.reload()}>Try again</button></div>}
           {loading ? <div className="empty-state"><span>✳</span><h3>Preparing your puja collection…</h3></div> : visibleProducts.length ? <div className="product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} onView={setSelectedProduct} />)}</div> : (
             <div className="empty-state"><span>{products.length ? "✳" : "♡"}</span><h3>{products.length ? "No items match your search." : "Puja essentials are coming soon."}</h3><p>{products.length ? "Try another search or category." : "Please check back soon for items for your worship and celebrations."}</p></div>
@@ -849,9 +961,9 @@ export default function App() {
         </section>
         <section className="closing-banner"><div className="closing-flower" aria-hidden="true">✺</div><div><span className="eyebrow">HERE FOR YOUR EVERY RITUAL</span><h2>Need help choosing?</h2><p>We’re happy to help you find the right puja essentials.</p></div><a className="button button-light" href="https://wa.me/919770857704" target="_blank" rel="noopener noreferrer">Chat with us <span aria-hidden="true">↗</span></a></section>
       </main>
-      <footer className="site-footer"><a className="brand footer-brand" href="#"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a><span>Puja essentials for every sacred moment.</span><span>COD · Secure UPI checkout</span><span className="copyright">© {new Date().getFullYear()} Rajendra Puja Store</span></footer>
-      {showAdmin && <AdminDialog onClose={() => setShowAdmin(false)} onProductsChange={refreshProducts} />}
-      {showCart && <CartDrawer items={cart} onClose={() => setShowCart(false)} onChange={changeQuantity} onPlaceOrder={placeOrder} onRequireAuth={requireCheckoutSignIn} isAuthenticated={Boolean(user)} />}
+      <footer className="site-footer"><a className="brand footer-brand" href="#"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a><span>Puja essentials for every sacred moment.</span><span>Secure online payments</span><span className="copyright">© {new Date().getFullYear()} Rajendra Puja Store</span></footer>
+      {showAdmin && <AdminDialog onClose={() => setShowAdmin(false)} onProductsChange={refreshProducts} onCategoriesChange={refreshCategories} />}
+      {showCart && <CartDrawer items={cart} onClose={() => setShowCart(false)} onChange={changeQuantity} onPlaceOrder={placeOrder} onRequireAuth={requireCheckoutSignIn} isAuthenticated={Boolean(user)} isProcessing={paymentPending} />}
       {selectedProduct && <ProductDetailsDialog product={selectedProduct} onClose={() => setSelectedProduct(null)} onAdd={addToCart} />}
       {showAuth && <AuthDialog onClose={() => { setShowAuth(false); setCheckoutAfterLogin(false); }} onAuthenticated={(authenticatedUser) => {
         setUser(authenticatedUser);

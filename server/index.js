@@ -588,7 +588,7 @@
 
 
 import dotenv from "dotenv";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -602,13 +602,13 @@ import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import multer from "multer";
 import nodemailer from "nodemailer";
-import QRCode from "qrcode";
-import { randomInt, createHash } from "node:crypto";
 
 import Product from "./models/Product.js";
 import User from "./models/User.js";
 import Otp from "./models/Otp.js";
 import Order from "./models/Order.js";
+import PaymentAttempt from "./models/PaymentAttempt.js";
+import Category from "./models/Category.js";
 
 // ============================================
 // 1. ENVIRONMENT CONFIGURATION
@@ -675,6 +675,49 @@ const CLIENT_URLS = new Set([
     .map((origin) => origin.trim().replace(/\/+$/, ""))
     .filter(Boolean),
 ]);
+
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID?.trim() || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET?.trim() || "";
+const RAZORPAY_API_URL = "https://api.razorpay.com/v1";
+
+class PaymentGatewayError extends Error {
+  constructor() {
+    super("The secure payment service is temporarily unavailable.");
+    this.name = "PaymentGatewayError";
+  }
+}
+
+async function razorpayRequest(endpoint, { method = "GET", body } = {}) {
+  const credentials = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let providerResponse;
+
+  try {
+    providerResponse = await fetch(`${RAZORPAY_API_URL}/${endpoint}`, {
+      method,
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    console.error("Razorpay API request failed:", error.message);
+    throw new PaymentGatewayError();
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const responseBody = await providerResponse.json().catch(() => null);
+  if (!providerResponse.ok || !responseBody) {
+    console.error(`Razorpay API returned HTTP ${providerResponse.status}: ${responseBody?.error?.code || "invalid response"}`);
+    throw new PaymentGatewayError();
+  }
+
+  return responseBody;
+}
 
 app.disable("x-powered-by");
 
@@ -787,10 +830,14 @@ async function sendOrderConfirmation(order, user) {
     timeStyle: "short",
     timeZone: "Asia/Kolkata",
   });
-  const paymentMethod = order.paymentMethod === "upi" ? "UPI" : "Cash on Delivery";
-  const paymentStatus = order.paymentMethod === "upi"
-    ? `Payment ${PAYMENT_STATUS_LABELS[order.paymentStatus]?.toLowerCase() || "pending"}`
-    : `Pay ${formatOrderPrice(order.subtotal)} in cash when your order arrives`;
+  const paymentMethod = order.paymentMethod === "razorpay"
+    ? "Razorpay"
+    : order.paymentMethod === "upi"
+      ? "UPI"
+      : "Cash on Delivery";
+  const paymentStatus = order.paymentMethod === "cod"
+    ? `Pay ${formatOrderPrice(order.subtotal)} in cash when your order arrives`
+    : `Payment ${PAYMENT_STATUS_LABELS[order.paymentStatus]?.toLowerCase() || "pending"}`;
 
   const itemLines = order.items.map((item) =>
     `- ${item.name}${item.category ? ` (${item.category})` : ""} | ${item.quantity} x ${formatOrderPrice(item.price)} = ${formatOrderPrice(item.price * item.quantity)}`
@@ -918,10 +965,14 @@ async function sendOrderUpdateEmail(order, updateType) {
     }).format(amount);
   const customerName = order.user.name || order.customerName;
   const orderStatus = ORDER_STATUS_LABELS[order.status] || "Pending";
-  const paymentMethod = order.paymentMethod === "upi" ? "UPI" : "Cash on Delivery";
-  const paymentStatus = order.paymentMethod === "upi"
-    ? PAYMENT_STATUS_LABELS[order.paymentStatus] || "Pending"
-    : "Due on delivery";
+  const paymentMethod = order.paymentMethod === "razorpay"
+    ? "Razorpay"
+    : order.paymentMethod === "upi"
+      ? "UPI"
+      : "Cash on Delivery";
+  const paymentStatus = order.paymentMethod === "cod"
+    ? "Due on delivery"
+    : PAYMENT_STATUS_LABELS[order.paymentStatus] || "Pending";
   const text = [
     `Hello ${customerName},`,
     "",
@@ -1312,33 +1363,18 @@ app.post("/api/user/logout", (_request, response) => {
   response.json({ authenticated: false });
 });
 
-app.post("/api/payment/upi-qr", requireUser, async (request, response, next) => {
+app.post("/api/payment/razorpay/order", requireUser, async (request, response, next) => {
   try {
-    const amount = Number(request.body?.amount);
-    if (!Number.isFinite(amount) || amount < 1 || amount > 10_000_000) {
-      return response.status(400).json({ error: "Enter a valid payment amount." });
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      return response.status(503).json({ error: "Online payment is not configured yet. Please contact the store." });
     }
 
-    const upiId = process.env.UPI_ID;
-    if (!upiId) return response.status(500).json({ error: "UPI payment is not configured." });
-
-    const upiUrl = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent("Rajendra Puja Store")}&am=${amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent("Rajendra Puja Store order")}`;
-    const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 280, margin: 1 });
-    response.json({ upiId, upiUrl, qrDataUrl, amount });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/orders", requireUser, async (request, response, next) => {
-  try {
     const rawItems = Array.isArray(request.body?.items) ? request.body.items : [];
     const customerPhone = typeof request.body?.phone === "string" ? request.body.phone.trim() : "";
     const deliveryAddress = typeof request.body?.address === "string" ? request.body.address.trim() : "";
     const showPublicPurchase = request.body?.showPublicPurchase === true;
     const city = typeof request.body?.city === "string" ? request.body.city.trim() : "";
-    const paymentMethod = request.body?.paymentMethod === "upi" ? "upi" : "cod";
-    if (!rawItems.length) return response.status(400).json({ error: "Your bag is empty." });
+    if (!rawItems.length || rawItems.length > 50) return response.status(400).json({ error: "Your bag is empty or contains too many items." });
     if (!/^[0-9+\-\s]{8,20}$/.test(customerPhone)) {
       return response.status(400).json({ error: "Enter a valid delivery phone number." });
     }
@@ -1348,7 +1384,11 @@ app.post("/api/orders", requireUser, async (request, response, next) => {
     if (showPublicPurchase && (!city || city.length > 80)) {
       return response.status(400).json({ error: "Enter a valid city to opt in to the public purchase popup." });
     }
-    const productIds = rawItems.map((item) => item.id).filter(Boolean);
+    if (rawItems.some((item) => typeof item?.id !== "string" || !mongoose.isValidObjectId(item.id))) {
+      return response.status(400).json({ error: "A bag item is no longer available." });
+    }
+
+    const productIds = [...new Set(rawItems.map((item) => item.id))];
     const products = await Product.find({ _id: { $in: productIds } }).lean();
     const productMap = new Map(products.map((product) => [product._id.toString(), product]));
     const items = [];
@@ -1367,18 +1407,147 @@ app.post("/api/orders", requireUser, async (request, response, next) => {
       });
     }
     const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const order = await Order.create({
+    const amountPaise = Math.round(subtotal * 100);
+    if (!Number.isSafeInteger(amountPaise) || amountPaise < 1) {
+      return response.status(400).json({ error: "The order total is invalid." });
+    }
+
+    const attempt = await PaymentAttempt.create({
       user: request.user._id,
       customerName: request.user.name,
       customerPhone,
       deliveryAddress,
       city: showPublicPurchase ? city : "",
       showPublicPurchase,
-      paymentMethod,
-      paymentStatus: "pending",
       items,
       subtotal,
+      amountPaise,
+      currency: "INR",
     });
+
+    let providerOrder;
+    try {
+      providerOrder = await razorpayRequest("orders", {
+        method: "POST",
+        body: { amount: amountPaise, currency: "INR", receipt: attempt._id.toString() },
+      });
+      if (typeof providerOrder.id !== "string" || providerOrder.amount !== amountPaise || providerOrder.currency !== "INR") {
+        throw new PaymentGatewayError();
+      }
+    } catch (error) {
+      await PaymentAttempt.updateOne({ _id: attempt._id }, { $set: { status: "failed" } });
+      throw error;
+    }
+
+    attempt.razorpayOrderId = providerOrder.id;
+    attempt.status = "pending";
+    await attempt.save();
+    response.status(201).json({
+      keyId: RAZORPAY_KEY_ID,
+      amount: amountPaise,
+      currency: "INR",
+      razorpayOrderId: providerOrder.id,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/payment/razorpay/verify", requireUser, async (request, response, next) => {
+  try {
+    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+      return response.status(503).json({ error: "Online payment is not configured yet. Please contact the store." });
+    }
+
+    const orderId = typeof request.body?.razorpay_order_id === "string" ? request.body.razorpay_order_id : "";
+    const paymentId = typeof request.body?.razorpay_payment_id === "string" ? request.body.razorpay_payment_id : "";
+    const signature = typeof request.body?.razorpay_signature === "string" ? request.body.razorpay_signature : "";
+    if (!/^order_[A-Za-z0-9]+$/.test(orderId) || !/^pay_[A-Za-z0-9]+$/.test(paymentId) || !/^[a-f0-9]{64}$/i.test(signature)) {
+      return response.status(400).json({ error: "The payment confirmation is invalid." });
+    }
+
+    const attempt = await PaymentAttempt.findOne({ razorpayOrderId: orderId, user: request.user._id });
+    if (!attempt) return response.status(404).json({ error: "Checkout payment was not found." });
+
+    const expectedSignature = createHmac("sha256", RAZORPAY_KEY_SECRET)
+      .update(`${orderId}|${paymentId}`)
+      .digest();
+    const receivedSignature = Buffer.from(signature, "hex");
+    if (receivedSignature.length !== expectedSignature.length || !timingSafeEqual(receivedSignature, expectedSignature)) {
+      return response.status(400).json({ error: "The payment could not be verified. No order has been placed." });
+    }
+
+    if (attempt.status === "paid") {
+      if (attempt.razorpayPaymentId !== paymentId || !attempt.order) {
+        return response.status(409).json({ error: "This checkout has already been completed." });
+      }
+      const existingOrder = await Order.findById(attempt.order);
+      if (!existingOrder) return response.status(409).json({ error: "The paid checkout could not be matched to an order. Please contact the store." });
+      return response.json({ ...existingOrder.toObject(), emailStatus: "sent" });
+    }
+
+    const payment = await razorpayRequest(`payments/${encodeURIComponent(paymentId)}`);
+    const matchesAttempt = payment.order_id === orderId
+      && payment.amount === attempt.amountPaise
+      && payment.currency === attempt.currency;
+    if (!matchesAttempt) {
+      console.error(`Razorpay payment details did not match checkout ${attempt._id}.`);
+      return response.status(402).json({ error: "Payment details did not match this checkout. No order has been placed; please contact the store." });
+    }
+
+    let confirmedPayment = payment;
+    if (payment.status === "authorized") {
+      try {
+        confirmedPayment = await razorpayRequest(`payments/${encodeURIComponent(paymentId)}/capture`, {
+          method: "POST",
+          body: { amount: attempt.amountPaise, currency: attempt.currency },
+        });
+      } catch (captureError) {
+        if (!(captureError instanceof PaymentGatewayError)) throw captureError;
+        confirmedPayment = await razorpayRequest(`payments/${encodeURIComponent(paymentId)}`);
+      }
+    }
+    if (confirmedPayment.status !== "captured") {
+      return response.status(402).json({ error: "Payment is not complete. No order has been placed; please finish payment or contact the store." });
+    }
+
+    let order;
+    try {
+      order = await Order.create({
+        user: attempt.user,
+        customerName: attempt.customerName,
+        customerPhone: attempt.customerPhone,
+        deliveryAddress: attempt.deliveryAddress,
+        city: attempt.city,
+        showPublicPurchase: attempt.showPublicPurchase,
+        paymentMethod: "razorpay",
+        paymentStatus: "verified",
+        razorpayOrderId: orderId,
+        razorpayPaymentId: paymentId,
+        items: attempt.items,
+        subtotal: attempt.subtotal,
+      });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      order = await Order.findOne({ razorpayPaymentId: paymentId });
+      if (!order) throw error;
+    }
+
+    const paidAttempt = await PaymentAttempt.findOneAndUpdate(
+      { _id: attempt._id, status: { $ne: "paid" } },
+      { $set: { status: "paid", razorpayPaymentId: paymentId, order: order._id } },
+      { new: true },
+    );
+    if (!paidAttempt) {
+      const savedAttempt = await PaymentAttempt.findById(attempt._id);
+      if (savedAttempt?.razorpayPaymentId !== paymentId || !savedAttempt.order) {
+        return response.status(409).json({ error: "This checkout has already been completed." });
+      }
+      const existingOrder = await Order.findById(savedAttempt.order);
+      if (!existingOrder) return response.status(409).json({ error: "The paid checkout could not be matched to an order. Please contact the store." });
+      return response.json({ ...existingOrder.toObject(), emailStatus: "sent" });
+    }
+
     const emailStatus = mailTransport ? "sending" : "not_configured";
     if (mailTransport) {
       void sendOrderConfirmation(order, request.user)
@@ -1395,6 +1564,10 @@ app.post("/api/orders", requireUser, async (request, response, next) => {
   }
 });
 
+app.post("/api/orders", requireUser, (_request, response) => {
+  response.status(409).json({ error: "Complete Razorpay payment before placing an order." });
+});
+
 app.get("/api/orders/recent-purchases", async (_request, response, next) => {
   try {
     const cutoff = new Date(Date.now() - 15 * 60 * 1000);
@@ -1403,8 +1576,8 @@ app.get("/api/orders/recent-purchases", async (_request, response, next) => {
       showPublicPurchase: true,
       status: { $ne: "cancelled" },
       $or: [
-        { paymentMethod: { $ne: "upi" } },
-        { paymentMethod: "upi", paymentStatus: "verified" },
+        { paymentMethod: { $nin: ["upi", "razorpay"] } },
+        { paymentMethod: { $in: ["upi", "razorpay"] }, paymentStatus: "verified" },
       ],
     })
       .select("customerName city items.name items.quantity createdAt -_id")
@@ -1458,6 +1631,9 @@ app.patch("/api/admin/orders/:id/payment-status", requireAdmin, async (request, 
     }
     const order = await Order.findById(request.params.id).populate("user", "name email");
     if (!order) return response.status(404).json({ error: "Order not found." });
+    if (order.paymentMethod === "razorpay") {
+      return response.status(409).json({ error: "Razorpay payment status is verified automatically." });
+    }
     let emailSent = null;
     if (order.paymentStatus !== paymentStatus) {
       order.paymentStatus = paymentStatus;
@@ -1628,6 +1804,79 @@ app.get("/api/products", async (_request, response, next) => {
     next(error);
   }
 });
+
+app.get("/api/categories", async (_request, response, next) => {
+  try {
+    const [productCategories, categories] = await Promise.all([
+      Product.distinct("category"),
+      Category.find().select("name imageContentType").sort({ name: 1 }).lean(),
+    ]);
+    const categoryByName = new Map(
+      categories.map((item) => [
+        item.name,
+        {
+          name: item.name,
+          imageUrl: item.imageContentType ? `/api/categories/${item._id}/image` : "",
+        },
+      ]),
+    );
+    const names = [...new Set([...productCategories, ...categories.map((item) => item.name)])];
+
+    response.json(names.map((name) => categoryByName.get(name) || { name, imageUrl: "" }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/categories/:id/image", async (request, response, next) => {
+  try {
+    const category = await Category.findById(request.params.id).select("+imageData imageContentType");
+    if (!category?.imageData || !category.imageContentType) {
+      return response.status(404).json({ error: "Category image not found." });
+    }
+
+    response.set("Content-Type", category.imageContentType);
+    response.set("Cache-Control", "no-cache");
+    response.send(category.imageData);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put(
+  "/api/categories",
+  requireAdmin,
+  upload.single("image"),
+  async (request, response, next) => {
+    try {
+      const name = checkText(request.body.name, "Category", 40);
+      if (!request.file || !validateImageSignature(request.file)) {
+        return response.status(400).json({ error: "Upload a valid JPG, PNG, or WebP category image." });
+      }
+
+      const category = await Category.findOneAndUpdate(
+        { name },
+        {
+          $set: {
+            imageData: request.file.buffer,
+            imageContentType: request.file.mimetype,
+          },
+        },
+        { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+      );
+
+      response.json({
+        name: category.name,
+        imageUrl: `/api/categories/${category._id}/image`,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Category ")) {
+        return response.status(400).json({ error: error.message });
+      }
+      next(error);
+    }
+  },
+);
 
 // ============================================
 // 14. GET PRODUCT IMAGE
@@ -1819,6 +2068,12 @@ app.use((error, _request, response, _next) => {
   if (error?.message === "Not allowed by CORS") {
     return response.status(403).json({
       error: "This website is not allowed to access the store API.",
+    });
+  }
+
+  if (error instanceof PaymentGatewayError) {
+    return response.status(502).json({
+      error: "Secure payment service is temporarily unavailable. Please try again.",
     });
   }
 
