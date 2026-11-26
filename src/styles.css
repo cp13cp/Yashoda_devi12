@@ -125,6 +125,20 @@ h1, h2, h3, p { margin-top: 0; }
 .closing-banner .eyebrow { color: #d4d7c8; }
 .closing-banner h2 { margin: 10px 0 7px; font-family: var(--serif); font-size: 32px; font-weight: 500; }
 .closing-banner p { margin: 0; color: #d1d5c7; font-size: 11px; }
+.tracking-section { padding: 55px 7.2%; background: #f5f0e5; }
+.tracking-card { max-width: 720px; margin: 0 auto; padding: 30px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.tracking-card h2 { margin: 11px 0 7px; font-family: var(--serif); font-size: 30px; font-weight: 500; }
+.tracking-card > p { margin-bottom: 20px; color: var(--muted); font-size: 12px; }
+.tracking-form label { display: block; margin-bottom: 7px; color: #465349; font-size: 11px; font-weight: 700; }
+.tracking-input-row { display: flex; gap: 9px; }
+.tracking-input-row input { min-width: 0; flex: 1; height: 47px; padding: 0 12px; border: 1px solid #dcdcd1; border-radius: 5px; background: #fbfaf5; color: var(--ink); text-transform: uppercase; }
+.tracking-input-row input:focus { outline: 1px solid var(--green); border-color: var(--green); }
+.tracking-result { margin-top: 18px; padding: 16px; display: grid; gap: 7px; border: 1px solid var(--line); border-left: 4px solid var(--green); background: #fffef9; }
+.tracking-result.status-cancelled { border-left-color: var(--coral); }
+.tracking-result > span, .tracking-result small { color: var(--muted); font-size: 11px; }
+.tracking-status { font-family: var(--serif); font-size: 20px; font-weight: 600; }
+.order-tracking-number { margin-top: 12px; padding: 9px 10px; display: flex; justify-content: space-between; gap: 10px; background: #f3f5ef; color: var(--muted); font-size: 10px; }
+.order-tracking-number strong { color: var(--green-dark); letter-spacing: .04em; }
 .site-footer { min-height: 91px; padding: 19px 7.2% 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #535d53; font-size: 11px; font-weight: 600; }
 .footer-brand { color: var(--ink); }
 .footer-brand .brand-mark { width: 26px; height: 26px; font-size: 15px; }
@@ -389,7 +403,7 @@ h1, h2, h3, p { margin-top: 0; }
 .recent-purchase-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .recent-purchase-copy strong { font-family: var(--serif); font-size: 16px; font-weight: 500; }
 .recent-purchase-copy span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.whatsapp-float { min-height: 52px; position: fixed; z-index: 9; right: 22px; bottom: 20px; display: inline-flex; align-items: center; gap: 10px; padding: 0 18px; border: 1px solid #159447; border-radius: 999px; background: #20b95a; color: #fff; box-shadow: 0 8px 24px rgba(32,185,90,.32); font-size: 12px; font-weight: 700; transition: background .2s ease, transform .2s ease; }
+.whatsapp-float { min-height: 52px; position: fixed; z-index: 9; right: 22px; bottom: 32px; display: inline-flex; align-items: center; gap: 10px; padding: 0 18px; border: 1px solid #159447; border-radius: 999px; background: #20b95a; color: #fff; box-shadow: 0 8px 24px rgba(32,185,90,.32); font-size: 12px; font-weight: 700; transition: background .2s ease, transform .2s ease; }
 .whatsapp-float:hover { background: #159447; transform: translateY(-2px); }
 .whatsapp-float:focus-visible { outline: 3px solid #f4c76d; outline-offset: 3px; }
 .whatsapp-float svg { width: 23px; height: 23px; flex: 0 0 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -406,9 +420,12 @@ h1, h2, h3, p { margin-top: 0; }
   .hero-side-label { display: none; }
 }
 @media (max-width: 650px) {
+  .tracking-section { padding: 35px 5%; }
+  .tracking-card { padding: 21px 17px; }
+  .tracking-input-row { align-items: stretch; flex-direction: column; }
   .cart-toast { right: 16px; bottom: 88px; min-height: 76px; padding-left: 12px; }
   .recent-purchase-toast { left: 16px; bottom: 88px; }
-  .whatsapp-float { right: 16px; bottom: 16px; min-height: 48px; padding: 0 15px; }
+  .whatsapp-float { right: 16px; bottom: 28px; min-height: 48px; padding: 0 15px; }
   .announcement { gap: 7px; }
   .announcement > span:last-child { display: none; }
   .product-details-backdrop { align-items: flex-start; padding: 10px; }
