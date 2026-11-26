@@ -24,6 +24,7 @@ const orderSchema = new mongoose.Schema(
     paymentStatus: { type: String, enum: ["pending", "submitted", "verified", "failed"], default: "pending" },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },
+    trackingNumber: { type: String, trim: true, uppercase: true },
     items: { type: [orderItemSchema], required: true },
     subtotal: { type: Number, required: true },
     status: { type: String, enum: ["new", "confirmed", "delivered", "cancelled"], default: "new", index: true },
@@ -33,5 +34,6 @@ const orderSchema = new mongoose.Schema(
 
 orderSchema.index({ showPublicPurchase: 1, createdAt: -1 });
 orderSchema.index({ razorpayPaymentId: 1 }, { unique: true, sparse: true });
+orderSchema.index({ trackingNumber: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model("Order", orderSchema);

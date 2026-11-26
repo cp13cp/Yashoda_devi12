@@ -588,7 +588,7 @@
 
 
 import dotenv from "dotenv";
-import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -806,6 +806,17 @@ const PAYMENT_STATUS_LABELS = {
   failed: "Failed",
 };
 
+const TRACKING_STATUS_LABELS = {
+  new: "Order received",
+  confirmed: "Preparing your order",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
+function createTrackingNumber() {
+  return `YPS-${randomBytes(8).toString("hex").toUpperCase()}`;
+}
+
 async function sendOrderConfirmation(order, user) {
   if (!mailTransport) {
     console.log(`[ORDER] Email confirmation skipped; SMTP is not configured. Order ${order._id}`);
@@ -838,6 +849,7 @@ async function sendOrderConfirmation(order, user) {
   const paymentStatus = order.paymentMethod === "cod"
     ? `Pay ${formatOrderPrice(order.subtotal)} in cash when your order arrives`
     : `Payment ${PAYMENT_STATUS_LABELS[order.paymentStatus]?.toLowerCase() || "pending"}`;
+  const trackingUrl = "https://rajendrapujastore.in/#track-order";
 
   const itemLines = order.items.map((item) =>
     `- ${item.name}${item.category ? ` (${item.category})` : ""} | ${item.quantity} x ${formatOrderPrice(item.price)} = ${formatOrderPrice(item.price * item.quantity)}`
@@ -849,6 +861,8 @@ async function sendOrderConfirmation(order, user) {
     "Thank you for shopping with Rajendra Puja Store. We have received your order.",
     "",
     `Order ID: ${order._id}`,
+    `Tracking number: ${order.trackingNumber}`,
+    `Track your order: ${trackingUrl}`,
     `Placed on: ${orderDate}`,
     `Order status: ${ORDER_STATUS_LABELS[order.status] || "Pending"}`,
     "",
@@ -896,6 +910,7 @@ async function sendOrderConfirmation(order, user) {
         <div style="padding:24px 28px">
           <table style="width:100%;border-collapse:collapse;font-size:14px">
             <tr><td style="padding:5px 0;color:#667267">Order ID</td><td style="padding:5px 0;text-align:right;font-weight:700">${escapeHtml(order._id)}</td></tr>
+            <tr><td style="padding:5px 0;color:#667267">Tracking number</td><td style="padding:5px 0;text-align:right;font-weight:700">${escapeHtml(order.trackingNumber)}</td></tr>
             <tr><td style="padding:5px 0;color:#667267">Order date</td><td style="padding:5px 0;text-align:right">${escapeHtml(orderDate)}</td></tr>
             <tr><td style="padding:5px 0;color:#667267">Order status</td><td style="padding:5px 0;text-align:right">${escapeHtml(ORDER_STATUS_LABELS[order.status] || "Pending")}</td></tr>
           </table>
@@ -919,7 +934,7 @@ async function sendOrderConfirmation(order, user) {
             <strong>${escapeHtml(paymentMethod)}</strong><br>
             ${escapeHtml(paymentStatus)}
           </div>
-          <p style="margin:24px 0 0;color:#667267;font-size:13px;line-height:1.6">You can view this order anytime from your Rajendra Puja Store account. We will email you when there is an update.</p>
+          <p style="margin:24px 0 0;color:#667267;font-size:13px;line-height:1.6">Track your order using the tracking number above at <a href="${trackingUrl}" style="color:#365d43">rajendrapujastore.in</a>. We will email you when there is an update.</p>
         </div>
       </div>
     </div>
@@ -973,10 +988,13 @@ async function sendOrderUpdateEmail(order, updateType) {
   const paymentStatus = order.paymentMethod === "cod"
     ? "Due on delivery"
     : PAYMENT_STATUS_LABELS[order.paymentStatus] || "Pending";
+  const trackingUrl = "https://rajendrapujastore.in/#track-order";
   const text = [
     `Hello ${customerName},`,
     "",
     `There is an update to your Rajendra Puja Store order #${order._id}.`,
+    `Tracking number: ${order.trackingNumber}`,
+    `Track your order: ${trackingUrl}`,
     `${updateLabel}: ${statusLabel}`,
     `Order status: ${orderStatus}`,
     `Payment method: ${paymentMethod}`,
@@ -993,6 +1011,7 @@ async function sendOrderUpdateEmail(order, updateType) {
         <h1 style="font-size:22px">Order update</h1>
         <p>Hello ${escapeHtml(customerName)}, there is an update to your order.</p>
         <p><strong>Order #${escapeHtml(order._id)}</strong></p>
+        <p>Tracking number: <strong>${escapeHtml(order.trackingNumber)}</strong></p>
         <div style="padding:14px;background:#f2f5ef;border-radius:8px;line-height:1.8">
           <strong>${escapeHtml(updateLabel)}: ${escapeHtml(statusLabel)}</strong><br>
           Order status: ${escapeHtml(orderStatus)}<br>
@@ -1000,6 +1019,7 @@ async function sendOrderUpdateEmail(order, updateType) {
           Payment status: ${escapeHtml(paymentStatus)}<br>
           Order total: ${escapeHtml(formatOrderPrice(order.subtotal))}
         </div>
+        <p><a href="${trackingUrl}" style="color:#365d43">Track your order</a></p>
         <p>Thank you,<br>Rajendra Puja Store</p>
       </div>
     </div>
@@ -1483,7 +1503,7 @@ app.post("/api/payment/razorpay/verify", requireUser, async (request, response, 
       }
       const existingOrder = await Order.findById(attempt.order);
       if (!existingOrder) return response.status(409).json({ error: "The paid checkout could not be matched to an order. Please contact the store." });
-      return response.json({ ...existingOrder.toObject(), emailStatus: "sent" });
+      return response.json({ ...existingOrder.toObject(), emailStatus: "already_processed" });
     }
 
     const payment = await razorpayRequest(`payments/${encodeURIComponent(paymentId)}`);
@@ -1524,6 +1544,7 @@ app.post("/api/payment/razorpay/verify", requireUser, async (request, response, 
         paymentStatus: "verified",
         razorpayOrderId: orderId,
         razorpayPaymentId: paymentId,
+        trackingNumber: createTrackingNumber(),
         items: attempt.items,
         subtotal: attempt.subtotal,
       });
@@ -1545,18 +1566,19 @@ app.post("/api/payment/razorpay/verify", requireUser, async (request, response, 
       }
       const existingOrder = await Order.findById(savedAttempt.order);
       if (!existingOrder) return response.status(409).json({ error: "The paid checkout could not be matched to an order. Please contact the store." });
-      return response.json({ ...existingOrder.toObject(), emailStatus: "sent" });
+      return response.json({ ...existingOrder.toObject(), emailStatus: "already_processed" });
     }
 
-    const emailStatus = mailTransport ? "sending" : "not_configured";
+    let emailStatus = "not_configured";
     if (mailTransport) {
-      void sendOrderConfirmation(order, request.user)
-        .then(() => {
-          console.info(`Order confirmation email sent for order ${order._id}`);
-        })
-        .catch((emailError) => {
-          console.error("Order confirmation email failed:", emailError);
-        });
+      try {
+        await sendOrderConfirmation(order, request.user);
+        emailStatus = "sent";
+        console.info(`Order confirmation email sent for order ${order._id}`);
+      } catch (emailError) {
+        emailStatus = "failed";
+        console.error("Order confirmation email failed:", emailError);
+      }
     }
     response.status(201).json({ ...order.toObject(), emailStatus });
   } catch (error) {
@@ -1594,6 +1616,30 @@ app.get("/api/orders/recent-purchases", async (_request, response, next) => {
       }))
     );
     response.json(purchases.slice(0, 10));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/orders/track/:trackingNumber", async (request, response, next) => {
+  const trackingNumber = request.params.trackingNumber.trim().toUpperCase();
+  if (!/^YPS-[A-F0-9]{16}$/.test(trackingNumber)) {
+    return response.status(400).json({ error: "Enter a valid tracking number." });
+  }
+
+  try {
+    const order = await Order.findOne({ trackingNumber })
+      .select("trackingNumber status createdAt updatedAt")
+      .lean();
+    if (!order) return response.status(404).json({ error: "No order was found for that tracking number." });
+
+    response.json({
+      trackingNumber: order.trackingNumber,
+      status: order.status,
+      statusLabel: TRACKING_STATUS_LABELS[order.status] || "Order received",
+      placedAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    });
   } catch (error) {
     next(error);
   }

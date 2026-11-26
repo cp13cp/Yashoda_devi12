@@ -447,7 +447,7 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
                   <article className="admin-order-card" key={order._id}>
                     <div className="admin-order-head"><div><strong>#{order._id.slice(-6).toUpperCase()}</strong><span>{order.user?.name || order.customerName} · {order.user?.email || ""}</span></div><strong>{formatPrice(order.subtotal)}</strong></div>
                     <div className="admin-order-items">{order.items.map((item, index) => <span key={index}>{item.name} × {item.quantity}</span>)}</div>
-                    <div className="admin-cod-meta"><strong>{order.paymentMethod === "razorpay" ? "Razorpay" : order.paymentMethod === "upi" ? "UPI" : "COD"}</strong><span>{order.customerPhone}</span><small>{order.deliveryAddress}</small>{order.utr && <small>UTR: {order.utr}</small>}</div>
+                    <div className="admin-cod-meta"><strong>{order.paymentMethod === "razorpay" ? "Razorpay" : order.paymentMethod === "upi" ? "UPI" : "COD"}</strong><span>{order.customerPhone}</span><small>{order.deliveryAddress}</small>{order.trackingNumber && <small>Tracking: {order.trackingNumber}</small>}{order.utr && <small>UTR: {order.utr}</small>}</div>
                     <select value={order.status} onChange={(event) => updateOrderStatus(order._id, event.target.value)} aria-label={`Status for order ${order._id.slice(-6)}`}>
                       <option value="new">Pending</option><option value="confirmed">Confirmed</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
                     </select>
@@ -646,6 +646,7 @@ function AccountDrawer({ user, onClose, onLogout }) {
               <div className="order-card-head"><div><strong>Order #{order._id.slice(-6).toUpperCase()}</strong><span>{new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month:"short", year:"numeric" })}</span></div><span className={`order-status status-${order.status}`}>{order.status === "new" ? "Pending" : order.status}</span></div>
               <div className="order-items">{order.items.map((item, index) => <div key={`${item.productId}-${index}`}><span>{item.name} × {item.quantity}</span><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}</div>
               <div className="order-meta"><span>{order.paymentMethod === "razorpay" ? "Razorpay • paid" : order.paymentMethod === "cod" ? "Cash on Delivery" : `UPI • ${order.paymentStatus || "pending"}`}</span>{order.deliveryAddress && <span>{order.deliveryAddress}</span>}</div>
+              {order.trackingNumber && <div className="order-tracking-number"><span>Tracking number</span><strong>{order.trackingNumber}</strong></div>}
               <div className="order-total"><span>Total</span><strong>{formatPrice(order.subtotal)}</strong></div>
             </article>
           )) : <div className="account-empty"><span>♡</span><p>No orders yet.</p></div>}
@@ -656,13 +657,71 @@ function AccountDrawer({ user, onClose, onLogout }) {
   );
 }
 
+function OrderTracking() {
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [order, setOrder] = useState(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleTrackOrder(event) {
+    event.preventDefault();
+    const number = trackingNumber.trim().toUpperCase();
+    setPending(true);
+    setError("");
+    setOrder(null);
+    try {
+      const result = await api(`/api/orders/track/${encodeURIComponent(number)}`);
+      setOrder(result);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <section className="tracking-section" id="track-order" aria-labelledby="tracking-title">
+      <div className="tracking-card">
+        <span className="eyebrow"><span className="eyebrow-line" /> ORDER UPDATES</span>
+        <h2 id="tracking-title">Track your order</h2>
+        <p>Enter the tracking number from your order confirmation email or account.</p>
+        <form className="tracking-form" onSubmit={handleTrackOrder}>
+          <label htmlFor="tracking-number">Tracking number</label>
+          <div className="tracking-input-row">
+            <input
+              id="tracking-number"
+              value={trackingNumber}
+              onChange={(event) => setTrackingNumber(event.target.value.toUpperCase())}
+              placeholder="YPS-0123456789ABCDEF"
+              maxLength={20}
+              autoComplete="off"
+              required
+            />
+            <button className="button button-dark" type="submit" disabled={pending}>
+              {pending ? "Checking…" : "Track order"}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-message" role="alert">{error}</p>}
+        {order && (
+          <div className={`tracking-result status-${order.status}`} role="status">
+            <span>Tracking number: <strong>{order.trackingNumber}</strong></span>
+            <strong className="tracking-status">{order.statusLabel}</strong>
+            <small>Last updated {new Date(order.updatedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</small>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function AddToCartToast({ product, onClose, onViewBag }) {
   return (
     <div className="cart-toast" role="status" aria-live="polite">
       <span className="cart-toast-icon" aria-hidden="true">✓</span>
       <div className="cart-toast-copy">
         <strong>{product.kind === "order" ? product.title : "Added to your basket"}</strong>
-        <span>{product.kind === "order" ? "Payment verified" : product.name}</span>
+        <span>{product.kind === "order" ? product.trackingNumber ? `Tracking: ${product.trackingNumber}` : "Payment verified" : product.name}</span>
       </div>
       {product.kind !== "order" && <button className="cart-toast-action" type="button" onClick={onViewBag}>View basket</button>}
       <button className="cart-toast-close" type="button" onClick={onClose} aria-label="Close notification">×</button>
@@ -888,12 +947,13 @@ export default function App() {
       });
       setCartToast({
         kind: "order",
-        title: order.emailStatus === "sending"
-          ? "Order confirmed — email confirmation is being attempted"
+        trackingNumber: order.trackingNumber,
+        title: order.emailStatus === "sent"
+          ? "Order confirmed — email sent"
           : order.emailStatus === "not_configured"
             ? "Order confirmed — email is not configured; please contact the store"
-            : order.emailSent
-              ? "Order confirmed — details sent to your email"
+            : order.emailStatus === "failed"
+              ? "Order confirmed — confirmation email could not be sent"
               : "Order confirmed",
       });
       setCart(new Map());
@@ -919,7 +979,7 @@ export default function App() {
       <div className="announcement"><span>Shubh Labh · Puja essentials for every sacred moment</span><span className="announcement-dot">✳</span><span>Secure online payments</span></div>
       <header className="site-header">
         <a className="brand" href="#" aria-label="Rajendra Puja Store home"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a>
-        <nav className="main-nav" aria-label="Main navigation"><a href="#shop">Puja essentials</a><a href="#story">Our promise</a></nav>
+        <nav className="main-nav" aria-label="Main navigation"><a href="#shop">Puja essentials</a><a href="#story">Our promise</a><a href="#track-order">Track order</a></nav>
         <div className="header-actions">
           <button className="icon-button admin-trigger" type="button" onClick={() => setShowAdmin(true)} aria-label="Admin sign in" title="Admin sign in"><Icon name="settings" /></button>
           <button className="account-button" type="button" onClick={() => user ? setShowAccount(true) : setShowAuth(true)} aria-label={user ? `Open account for ${user.name}` : "Sign in"}>
@@ -960,8 +1020,9 @@ export default function App() {
           )}
         </section>
         <section className="closing-banner"><div className="closing-flower" aria-hidden="true">✺</div><div><span className="eyebrow">HERE FOR YOUR EVERY RITUAL</span><h2>Need help choosing?</h2><p>We’re happy to help you find the right puja essentials.</p></div><a className="button button-light" href="https://wa.me/919770857704" target="_blank" rel="noopener noreferrer">Chat with us <span aria-hidden="true">↗</span></a></section>
+        <OrderTracking />
       </main>
-      <footer className="site-footer"><a className="brand footer-brand" href="#"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a><span>Puja essentials for every sacred moment.</span><span>Secure online payments</span><span className="copyright">© {new Date().getFullYear()} Rajendra Puja Store</span></footer>
+      <footer className="site-footer"><a className="brand footer-brand" href="#"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a><span>Puja essentials for every sacred moment.</span><a href="#track-order">Track your order</a><span>Secure online payments</span><span className="copyright">© {new Date().getFullYear()} Rajendra Puja Store</span></footer>
       {showAdmin && <AdminDialog onClose={() => setShowAdmin(false)} onProductsChange={refreshProducts} onCategoriesChange={refreshCategories} />}
       {showCart && <CartDrawer items={cart} onClose={() => setShowCart(false)} onChange={changeQuantity} onPlaceOrder={placeOrder} onRequireAuth={requireCheckoutSignIn} isAuthenticated={Boolean(user)} isProcessing={paymentPending} />}
       {selectedProduct && <ProductDetailsDialog product={selectedProduct} onClose={() => setSelectedProduct(null)} onAdd={addToCart} />}

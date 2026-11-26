@@ -15,7 +15,7 @@ An online puja-samagri storefront built with React, Vite, Express, and MongoDB.
 4. Configure `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` for online payments. Configure SMTP optionally for email notifications.
 5. Run `npm run dev` and open `http://127.0.0.1:5173`.
 
-The admin dashboard manages products and category photos stored in MongoDB. Use the Categories tab to upload or replace category images; they appear as circular filters in the shop. Customers sign in and pay through Razorpay; an order is created only after the server verifies and captures the payment. Cash on Delivery and unverified UPI orders are disabled.
+The admin dashboard manages products and category photos stored in MongoDB. Use the Categories tab to upload or replace category images; they appear as circular filters in the shop. Customers sign in and pay through Razorpay; an order is created only after the server verifies and captures the payment. Customers receive a tracking number after purchase and can check its order status on the Track order section. Configure SMTP to send purchase confirmations and order-status emails. Cash on Delivery and unverified UPI orders are disabled.
 
 The floating WhatsApp button is for customer help at **+91 97708 57704**; orders are placed through the website checkout. Recent-purchase notifications show a customer's name and city only when they opt in at checkout, and only for eligible purchases from the last 15 minutes.
 
