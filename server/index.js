@@ -849,6 +849,10 @@ async function sendOrderConfirmation(order, user) {
   const paymentStatus = order.paymentMethod === "cod"
     ? `Pay ${formatOrderPrice(order.subtotal)} in cash when your order arrives`
     : `Payment ${PAYMENT_STATUS_LABELS[order.paymentStatus]?.toLowerCase() || "pending"}`;
+  const transactionLines = [];
+  if (order.razorpayOrderId) transactionLines.push(`Razorpay order ID: ${order.razorpayOrderId}`);
+  if (order.razorpayPaymentId) transactionLines.push(`Razorpay payment ID: ${order.razorpayPaymentId}`);
+  if (order.utr) transactionLines.push(`UPI UTR / Reference: ${order.utr}`);
   const trackingUrl = "https://rajendrapujastore.in/#track-order";
 
   const itemLines = order.items.map((item) =>
@@ -880,6 +884,8 @@ async function sendOrderConfirmation(order, user) {
     "PAYMENT",
     `Method: ${paymentMethod}`,
     `Payment status: ${paymentStatus}`,
+    `Amount: ${formatOrderPrice(order.subtotal)}`,
+    ...transactionLines,
     "",
     "You can view this order anytime from your Rajendra Puja Store account.",
     "We will email you when there is an update to your order.",
@@ -932,7 +938,11 @@ async function sendOrderConfirmation(order, user) {
           <h2 style="margin:24px 0 10px;font-size:17px">Payment details</h2>
           <div style="padding:14px;background:#f2f5ef;border-radius:8px;line-height:1.8;font-size:13px">
             <strong>${escapeHtml(paymentMethod)}</strong><br>
-            ${escapeHtml(paymentStatus)}
+            ${escapeHtml(paymentStatus)}<br>
+            Amount paid: <strong>${formatOrderPrice(order.subtotal)}</strong>
+            ${order.razorpayOrderId ? `<br>Razorpay order ID: <strong>${escapeHtml(order.razorpayOrderId)}</strong>` : ""}
+            ${order.razorpayPaymentId ? `<br>Razorpay payment ID: <strong>${escapeHtml(order.razorpayPaymentId)}</strong>` : ""}
+            ${order.utr ? `<br>UPI UTR / Reference: <strong>${escapeHtml(order.utr)}</strong>` : ""}
           </div>
           <p style="margin:24px 0 0;color:#667267;font-size:13px;line-height:1.6">Track your order using the tracking number above at <a href="${trackingUrl}" style="color:#365d43">rajendrapujastore.in</a>. We will email you when there is an update.</p>
         </div>
@@ -989,6 +999,10 @@ async function sendOrderUpdateEmail(order, updateType) {
     ? "Due on delivery"
     : PAYMENT_STATUS_LABELS[order.paymentStatus] || "Pending";
   const trackingUrl = "https://rajendrapujastore.in/#track-order";
+  const transactionLines = [];
+  if (order.razorpayOrderId) transactionLines.push(`Razorpay order ID: ${order.razorpayOrderId}`);
+  if (order.razorpayPaymentId) transactionLines.push(`Razorpay payment ID: ${order.razorpayPaymentId}`);
+  if (order.utr) transactionLines.push(`UPI UTR / Reference: ${order.utr}`);
   const text = [
     `Hello ${customerName},`,
     "",
@@ -1000,6 +1014,7 @@ async function sendOrderUpdateEmail(order, updateType) {
     `Payment method: ${paymentMethod}`,
     `Payment status: ${paymentStatus}`,
     `Order total: ${formatOrderPrice(order.subtotal)}`,
+    ...transactionLines,
     "",
     "Thank you,",
     "Rajendra Puja Store",
@@ -1018,6 +1033,9 @@ async function sendOrderUpdateEmail(order, updateType) {
           Payment method: ${escapeHtml(paymentMethod)}<br>
           Payment status: ${escapeHtml(paymentStatus)}<br>
           Order total: ${escapeHtml(formatOrderPrice(order.subtotal))}
+          ${order.razorpayOrderId ? `<br>Razorpay order ID: ${escapeHtml(order.razorpayOrderId)}` : ""}
+          ${order.razorpayPaymentId ? `<br>Razorpay payment ID: ${escapeHtml(order.razorpayPaymentId)}` : ""}
+          ${order.utr ? `<br>UPI UTR / Reference: ${escapeHtml(order.utr)}` : ""}
         </div>
         <p><a href="${trackingUrl}" style="color:#365d43">Track your order</a></p>
         <p>Thank you,<br>Rajendra Puja Store</p>
