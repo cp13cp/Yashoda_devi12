@@ -108,18 +108,20 @@ function ProductDetailsDialog({ product, onClose, onAdd }) {
   );
 }
 
-function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
+function AdminDialog({ onClose, onProductsChange, onCategoriesChange, onPosterChange }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [poster, setPoster] = useState(null);
   const [form, setForm] = useState({ name: "", price: "", category: "", description: "" });
   const [categoryForm, setCategoryForm] = useState({ name: "" });
   const [editingProductId, setEditingProductId] = useState(null);
   const [image, setImage] = useState(null);
   const [categoryImage, setCategoryImage] = useState(null);
+  const [posterImage, setPosterImage] = useState(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -137,6 +139,12 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
     setCategories(items);
     onCategoriesChange(items);
   }, [onCategoriesChange]);
+
+  const refreshPoster = useCallback(async () => {
+    const item = await api("/api/poster");
+    setPoster(item);
+    onPosterChange(item);
+  }, [onPosterChange]);
 
   useEffect(() => {
     let active = true;
@@ -157,10 +165,11 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
     if (!authenticated) return;
     refreshProducts().catch((requestError) => setError(requestError.message));
     refreshCategories().catch((requestError) => setError(requestError.message));
+    refreshPoster().catch((requestError) => setError(requestError.message));
     api("/api/admin/dashboard")
       .then(setDashboard)
       .catch((requestError) => setError(requestError.message));
-  }, [authenticated, refreshCategories, refreshProducts]);
+  }, [authenticated, refreshCategories, refreshPoster, refreshProducts]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -236,6 +245,22 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
     } finally {
       setPending(false);
     }
+  }
+
+  async function handleSavePoster(event) {
+    event.preventDefault();
+    const posterFormElement = event.currentTarget;
+    if (!posterImage) { setError("Choose a poster image to upload."); return; }
+    setPending(true); setError(""); setNotice("");
+    try {
+      const data = new FormData();
+      data.append("image", posterImage);
+      await api("/api/poster", { method: "PUT", body: data });
+      setPosterImage(null); posterFormElement.reset();
+      await refreshPoster();
+      setNotice("Homepage poster saved.");
+    } catch (requestError) { setError(requestError.message); }
+    finally { setPending(false); }
   }
 
   function handleEdit(product) {
@@ -356,10 +381,11 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
           </form>
         ) : (
           <>
-            <div className="admin-toolbar"><p>Products and category photos are saved in MongoDB.</p><button className="text-link" type="button" onClick={handleLogout} disabled={pending}>Sign out</button></div>
+            <div className="admin-toolbar"><p>Products, categories, and your homepage poster are saved in MongoDB.</p><button className="text-link" type="button" onClick={handleLogout} disabled={pending}>Sign out</button></div>
             <div className="admin-tabs" role="tablist">
               <button type="button" className={adminTab === "dashboard" ? "active" : ""} onClick={() => setAdminTab("dashboard")}>Dashboard</button>
               <button type="button" className={adminTab === "products" ? "active" : ""} onClick={() => setAdminTab("products")}>Products</button>
+              <button type="button" className={adminTab === "poster" ? "active" : ""} onClick={() => setAdminTab("poster")}>Poster</button>
               <button type="button" className={adminTab === "categories" ? "active" : ""} onClick={() => setAdminTab("categories")}>Categories</button>
               <button type="button" className={adminTab === "orders" ? "active" : ""} onClick={() => setAdminTab("orders")}>Orders</button>
             </div>
@@ -415,6 +441,17 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange }) {
                   )) : <p className="admin-empty">Your collection is empty. Add your first product above.</p>}
                 </div>
               </>
+            )}
+            {adminTab === "poster" && (
+              <form className="product-form" onSubmit={handleSavePoster}>
+                <h3>{poster?.imageUrl ? "Replace homepage poster" : "Add a homepage poster"}</h3>
+                <p className="category-form-note">Shown above the shop categories. JPG, PNG, or WebP, up to 3 MB.</p>
+                {poster?.imageUrl && <img className="admin-poster-preview" src={poster.imageUrl} alt="Current homepage poster" />}
+                <label>Poster image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPosterImage(event.target.files?.[0] || null)} required /></label>
+                {error && <p className="form-message" role="alert">{error}</p>}
+                {notice && <p className="form-message success" role="status">{notice}</p>}
+                <button className="button button-dark" type="submit" disabled={pending}>{pending ? "Saving..." : poster?.imageUrl ? "Replace poster" : "Upload poster"}</button>
+              </form>
             )}
             {adminTab === "categories" && (
               <>
@@ -795,6 +832,7 @@ function RecentPurchaseToast({ suspended }) {
 export default function App() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [poster, setPoster] = useState(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [cart, setCart] = useState(() => new Map());
@@ -819,6 +857,10 @@ export default function App() {
     setCategories(items);
   }, []);
 
+  const refreshPoster = useCallback((item) => {
+    setPoster(item);
+  }, []);
+
   useEffect(() => {
     let active = true;
     api("/api/products")
@@ -827,6 +869,9 @@ export default function App() {
       .finally(() => { if (active) setLoading(false); });
     api("/api/categories")
       .then((items) => { if (active) setCategories(items); })
+      .catch((requestError) => { if (active) setError(requestError.message); });
+    api("/api/poster")
+      .then((item) => { if (active) setPoster(item); })
       .catch((requestError) => { if (active) setError(requestError.message); });
     return () => { active = false; };
   }, []);
@@ -980,7 +1025,7 @@ export default function App() {
       <div className="announcement"><span>Shubh Labh · Puja essentials for every sacred moment</span><span className="announcement-dot">✳</span><span>Secure online payments</span></div>
       <header className="site-header">
         <a className="brand" href="#" aria-label="Rajendra Puja Store home"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a>
-        <nav className="main-nav" aria-label="Main navigation"><a href="#shop">Puja essentials</a><a href="#story">Our promise</a><a href="#track-order">Track order</a></nav>
+        <nav className="main-nav" aria-label="Main navigation"><a href="#categories">Categories</a><a href="#shop">Puja essentials</a><a href="#track-order">Track order</a></nav>
         <div className="header-actions">
           <button className="icon-button admin-trigger" type="button" onClick={() => setShowAdmin(true)} aria-label="Admin sign in" title="Admin sign in"><Icon name="settings" /></button>
           <button className="account-button" type="button" onClick={() => user ? setShowAccount(true) : setShowAuth(true)} aria-label={user ? `Open account for ${user.name}` : "Sign in"}>
@@ -990,31 +1035,26 @@ export default function App() {
         </div>
       </header>
       <main>
-        <section className="hero" aria-labelledby="hero-title">
-          <div className="hero-copy"><span className="eyebrow"><span className="eyebrow-line" /> FOR EVERY PRAYER & CELEBRATION</span><h1 id="hero-title">Make every<br /><em>ritual special.</em></h1><p>Discover puja essentials for daily worship, festive rituals, and the sacred moments you cherish.</p><a className="button button-dark" href="#shop">Shop puja essentials <span aria-hidden="true">↗</span></a><div className="hero-note"><span className="note-stars">✳ ✳ ✳</span> Selected with devotion, delivered with care</div></div>
-          <div className="hero-art" aria-label="A glowing diya for your daily worship"><div className="hero-art-image" /><div className="puja-mandala" aria-hidden="true">✺</div><div className="puja-diya" aria-hidden="true">🪔</div><div className="image-stamp"><span>SHUBH<br />LABH</span><span className="stamp-sparkle">✳</span></div><div className="hero-caption"><span>ॐ</span><span>Bring home a little more devotion</span></div></div>
-          <div className="hero-side-label">A LITTLE DEVOTION IN EVERY DETAIL</div>
+        {poster?.imageUrl && <section className="home-poster" aria-label="Store poster"><img src={poster.imageUrl} alt="Rajendra Puja Store poster" fetchPriority="high" /></section>}
+        <section className="home-categories" id="categories" aria-label="Shop categories">
+          <div className="category-list" aria-label="Filter by category">
+            <button className={`category-chip${category === "All" ? " active" : ""}`} type="button" onClick={() => setCategory("All")} aria-pressed={category === "All"}>
+              <span className="category-circle category-all" aria-hidden="true">✳</span><span className="category-name">All</span>
+            </button>
+            {categoryNames.map((name) => {
+              const item = categories.find((entry) => entry.name === name);
+              return (
+                <button className={`category-chip${category === name ? " active" : ""}`} type="button" key={name} onClick={() => setCategory(name)} aria-pressed={category === name}>
+                  {item?.imageUrl ? <img className="category-circle" src={item.imageUrl} alt="" loading="lazy" /> : <span className="category-circle category-placeholder" aria-hidden="true">✳</span>}
+                  <span className="category-name">{name}</span>
+                </button>
+              );
+            })}
+          </div>
         </section>
-        <section className="promise-strip" id="story" aria-label="Our promise"><div><span className="promise-icon">✳</span><span>Essentials for daily puja & festivals</span></div><div><span className="promise-icon">♡</span><span>Personal service, always</span></div><div><span className="promise-icon">↗</span><span>Secure online checkout</span></div></section>
         <section className="shop-section" id="shop">
           <div className="section-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> RAJENDRA PUJA STORE</span><h2>Puja essentials for <em>every ritual.</em></h2></div><label className="search-box"><Icon name="search" /><input type="search" placeholder="Search diya, incense, puja samagri..." aria-label="Search puja products" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
-          <div className="shop-toolbar">
-            <div className="category-list" aria-label="Filter by category">
-              <button className={`category-chip${category === "All" ? " active" : ""}`} type="button" onClick={() => setCategory("All")} aria-pressed={category === "All"}>
-                <span className="category-circle category-all" aria-hidden="true">✳</span><span className="category-name">All</span>
-              </button>
-              {categoryNames.map((name) => {
-                const item = categories.find((entry) => entry.name === name);
-                return (
-                  <button className={`category-chip${category === name ? " active" : ""}`} type="button" key={name} onClick={() => setCategory(name)} aria-pressed={category === name}>
-                    {item?.imageUrl ? <img className="category-circle" src={item.imageUrl} alt="" loading="lazy" /> : <span className="category-circle category-placeholder" aria-hidden="true">✳</span>}
-                    <span className="category-name">{name}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <span className="product-total">{visibleProducts.length} {visibleProducts.length === 1 ? "good thing" : "good things"}</span>
-          </div>
+          <p className="product-total">{visibleProducts.length} {visibleProducts.length === 1 ? "good thing" : "good things"}</p>
           {error && <div className="shop-message" role="alert">{error} <button type="button" onClick={() => window.location.reload()}>Try again</button></div>}
           {loading ? <div className="empty-state"><span>✳</span><h3>Preparing your puja collection…</h3></div> : visibleProducts.length ? <div className="product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} onAdd={addToCart} onView={setSelectedProduct} />)}</div> : (
             <div className="empty-state"><span>{products.length ? "✳" : "♡"}</span><h3>{products.length ? "No items match your search." : "Puja essentials are coming soon."}</h3><p>{products.length ? "Try another search or category." : "Please check back soon for items for your worship and celebrations."}</p></div>
@@ -1024,7 +1064,7 @@ export default function App() {
         <OrderTracking />
       </main>
       <footer className="site-footer"><a className="brand footer-brand" href="#"><span className="brand-mark">R</span><span className="brand-name">Rajendra <span>Puja Store</span></span></a><span>Puja essentials for every sacred moment.</span><a href="#track-order">Track your order</a><span>Secure online payments</span><span className="copyright">© {new Date().getFullYear()} Rajendra Puja Store</span></footer>
-      {showAdmin && <AdminDialog onClose={() => setShowAdmin(false)} onProductsChange={refreshProducts} onCategoriesChange={refreshCategories} />}
+      {showAdmin && <AdminDialog onClose={() => setShowAdmin(false)} onProductsChange={refreshProducts} onCategoriesChange={refreshCategories} onPosterChange={refreshPoster} />}
       {showCart && <CartDrawer items={cart} onClose={() => setShowCart(false)} onChange={changeQuantity} onPlaceOrder={placeOrder} onRequireAuth={requireCheckoutSignIn} isAuthenticated={Boolean(user)} isProcessing={paymentPending} />}
       {selectedProduct && <ProductDetailsDialog product={selectedProduct} onClose={() => setSelectedProduct(null)} onAdd={addToCart} />}
       {showAuth && <AuthDialog onClose={() => { setShowAuth(false); setCheckoutAfterLogin(false); }} onAuthenticated={(authenticatedUser) => {

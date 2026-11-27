@@ -609,6 +609,7 @@ import Otp from "./models/Otp.js";
 import Order from "./models/Order.js";
 import PaymentAttempt from "./models/PaymentAttempt.js";
 import Category from "./models/Category.js";
+import Poster from "./models/Poster.js";
 
 // ============================================
 // 1. ENVIRONMENT CONFIGURATION
@@ -1965,6 +1966,35 @@ app.get("/api/categories", async (_request, response, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/poster", async (_request, response, next) => {
+  try {
+    const poster = await Poster.findOne({ slot: "home" }).select("imageContentType updatedAt").lean();
+    response.json(poster?.imageContentType ? { imageUrl: `/api/poster/image?v=${poster.updatedAt?.getTime?.() || 0}` } : null);
+  } catch (error) { next(error); }
+});
+
+app.get("/api/poster/image", async (_request, response, next) => {
+  try {
+    const poster = await Poster.findOne({ slot: "home" }).select("+imageData imageContentType");
+    if (!poster?.imageData || !poster.imageContentType) return response.status(404).json({ error: "Homepage poster not found." });
+    response.set("Content-Type", poster.imageContentType);
+    response.set("Cache-Control", "no-cache");
+    response.send(poster.imageData);
+  } catch (error) { next(error); }
+});
+
+app.put("/api/poster", requireAdmin, upload.single("image"), async (request, response, next) => {
+  try {
+    if (!request.file || !validateImageSignature(request.file)) return response.status(400).json({ error: "Upload a valid JPG, PNG, or WebP poster image." });
+    const poster = await Poster.findOneAndUpdate(
+      { slot: "home" },
+      { $set: { imageData: request.file.buffer, imageContentType: request.file.mimetype } },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    response.json({ imageUrl: `/api/poster/image?v=${poster.updatedAt.getTime()}` });
+  } catch (error) { next(error); }
 });
 
 app.get("/api/categories/:id/image", async (request, response, next) => {
