@@ -1951,18 +1951,21 @@ app.get("/api/categories", async (_request, response, next) => {
       Product.distinct("category"),
       Category.find().select("name imageContentType").sort({ name: 1 }).lean(),
     ]);
+    const productCategorySet = new Set(productCategories);
     const categoryByName = new Map(
       categories.map((item) => [
         item.name,
         {
+          id: item._id.toString(),
           name: item.name,
           imageUrl: item.imageContentType ? `/api/categories/${item._id}/image` : "",
+          inUse: productCategorySet.has(item.name),
         },
       ]),
     );
     const names = [...new Set([...productCategories, ...categories.map((item) => item.name)])];
 
-    response.json(names.map((name) => categoryByName.get(name) || { name, imageUrl: "" }));
+    response.json(names.map((name) => categoryByName.get(name) || { name, imageUrl: "", inUse: true }));
   } catch (error) {
     next(error);
   }
@@ -1995,6 +1998,15 @@ app.put("/api/poster", requireAdmin, upload.single("image"), async (request, res
     );
     response.json({ imageUrl: `/api/poster/image?v=${poster.updatedAt.getTime()}` });
   } catch (error) { next(error); }
+});
+
+app.delete("/api/poster", requireAdmin, async (_request, response, next) => {
+  try {
+    await Poster.deleteOne({ slot: "home" });
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/categories/:id/image", async (request, response, next) => {
@@ -2046,6 +2058,23 @@ app.put(
     }
   },
 );
+
+app.delete("/api/categories/:id", requireAdmin, async (request, response, next) => {
+  try {
+    if (!mongoose.isValidObjectId(request.params.id)) {
+      return response.status(400).json({ error: "Invalid category." });
+    }
+    const category = await Category.findById(request.params.id);
+    if (!category) return response.status(404).json({ error: "Category not found." });
+    if (await Product.exists({ category: category.name })) {
+      return response.status(409).json({ error: "Reassign or remove products from this category before deleting it." });
+    }
+    await Category.deleteOne({ _id: category._id });
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ============================================
 // 14. GET PRODUCT IMAGE

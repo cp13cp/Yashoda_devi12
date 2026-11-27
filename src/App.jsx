@@ -263,6 +263,38 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange, onPosterCh
     finally { setPending(false); }
   }
 
+  async function handleDeletePoster() {
+    if (!window.confirm("Remove the homepage poster?")) return;
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      await api("/api/poster", { method: "DELETE" });
+      await refreshPoster();
+      setNotice("Homepage poster removed.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function handleDeleteCategory(item) {
+    if (!window.confirm(`Delete the "${item.name}" category? Products will not be deleted.`)) return;
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/api/categories/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      await refreshCategories();
+      setNotice(`${item.name} category deleted.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setPending(false);
+    }
+  }
+
   function handleEdit(product) {
     setEditingProductId(product.id);
     setForm({
@@ -451,13 +483,14 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange, onPosterCh
                 {error && <p className="form-message" role="alert">{error}</p>}
                 {notice && <p className="form-message success" role="status">{notice}</p>}
                 <button className="button button-dark" type="submit" disabled={pending}>{pending ? "Saving..." : poster?.imageUrl ? "Replace poster" : "Upload poster"}</button>
+                {poster?.imageUrl && <button className="delete-product" type="button" disabled={pending} onClick={handleDeletePoster}>Remove poster</button>}
               </form>
             )}
             {adminTab === "categories" && (
               <>
                 <form className="product-form" onSubmit={handleSaveCategory}>
                   <h3>Add or update a category</h3>
-                  <p className="category-form-note">Upload a square photo to show this category in a circle on the shop page. Use the same name to replace its image.</p>
+                  <p className="category-form-note">Upload a square photo to show this category in a circle on the shop page. Use the same name to replace its image. Categories in use by products must be cleared or reassigned before deletion; deleting a category never deletes products.</p>
                   <label>Category name<input list="admin-category-options" value={categoryForm.name} onChange={(event) => setCategoryForm({ name: event.target.value })} required maxLength={40} placeholder="Puja samagri" /><datalist id="admin-category-options">{categories.map((item) => <option key={item.name} value={item.name} />)}</datalist></label>
                   <label>Category photo (JPG, PNG, WebP · up to 3 MB)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setCategoryImage(event.target.files?.[0] || null)} required /></label>
                   {error && <p className="form-message" role="alert">{error}</p>}
@@ -469,7 +502,12 @@ function AdminDialog({ onClose, onProductsChange, onCategoriesChange, onPosterCh
                   {categories.length ? categories.map((item) => (
                     <div className="admin-product-row admin-category-row" key={item.name}>
                       {item.imageUrl ? <img className="admin-thumb admin-category-thumb" src={item.imageUrl} alt="" /> : <span className="admin-category-placeholder">✳</span>}
-                      <div><strong>{item.name}</strong><span>{item.imageUrl ? "Image uploaded" : "No image yet"}</span></div>
+                      <div><strong>{item.name}</strong><span>{item.inUse ? "In use by products" : item.imageUrl ? "Image uploaded" : "No image yet"}</span></div>
+                      {item.id && !item.inUse && (
+                        <div className="admin-product-actions">
+                          <button className="delete-product" type="button" disabled={pending} onClick={() => handleDeleteCategory(item)}>Remove</button>
+                        </div>
+                      )}
                     </div>
                   )) : <p className="admin-empty">Add an image for a category. Categories used by products appear here automatically.</p>}
                 </div>
