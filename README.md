@@ -17,7 +17,7 @@ An online puja-samagri storefront built with React, Vite, Express, and MongoDB.
 
 Admins can remove the homepage poster or delete unused categories from the dashboard. Categories still assigned to products cannot be deleted; deleting a category never deletes products.
 
-Order confirmations and status updates are emailed through SMTP. New-order details are also sent to `ADMIN_NOTIFICATION_EMAIL`; if it is unset, the admin copy goes to `SMTP_USER`.
+Order confirmations and status updates use SMTP when configured, or Resend otherwise; Resend requires a verified sender in `RESEND_FROM`. New-order details are also sent to `ADMIN_NOTIFICATION_EMAIL`; if it is unset, the admin copy goes to `SMTP_USER`.
 
 The admin dashboard manages products, category photos, and the homepage poster stored in MongoDB. Use the Categories tab to upload or replace category images; they appear as circular filters in the shop. Upload or replace the single homepage poster from the Poster tab. Customers sign in and pay through Razorpay; an order is created only after the server verifies and captures the payment. Customers receive a tracking number after purchase and can check its order status on the Track order section. Configure Resend (`RESEND_API_KEY` and `RESEND_FROM`) for account verification and password-reset OTPs, or use SMTP as a fallback. The Resend sender address must be verified in Resend; SMTP continues to send purchase confirmations and order-status emails. Cash on Delivery and unverified UPI orders are disabled.
 

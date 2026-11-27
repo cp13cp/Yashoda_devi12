@@ -863,9 +863,53 @@ function createTrackingNumber() {
   return `YPS-${randomBytes(8).toString("hex").toUpperCase()}`;
 }
 
+async function sendOrderEmail({ to, bcc, subject, text, html }) {
+  if (mailTransport) {
+    await mailTransport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      bcc,
+      subject,
+      text,
+      html,
+    });
+    return;
+  }
+
+  if (!resendApiKey) throw new Error("Configure SMTP or RESEND_API_KEY to send order emails.");
+  if (!resendFrom) throw new Error("RESEND_FROM is not configured.");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const emailResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: resendFrom,
+        to: [to],
+        ...(bcc ? { bcc: [bcc] } : {}),
+        subject,
+        text,
+        html,
+      }),
+      signal: controller.signal,
+    });
+    if (!emailResponse.ok) {
+      console.error(`[ORDER] Resend could not send order email (HTTP ${emailResponse.status}).`);
+      throw new Error(`Resend could not send the order email (HTTP ${emailResponse.status}).`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sendOrderConfirmation(order, user) {
-  if (!mailTransport) {
-    console.log(`[ORDER] Email confirmation skipped; SMTP is not configured. Order ${order._id}`);
+  if (!mailTransport && !resendApiKey) {
+    console.log(`[ORDER] Email confirmation skipped; SMTP or Resend is not configured. Order ${order._id}`);
     return false;
   }
   if (!user?.email) {
@@ -1007,8 +1051,7 @@ async function sendOrderConfirmation(order, user) {
     && adminNotificationEmail.toLowerCase() !== user.email.toLowerCase()
     ? adminNotificationEmail
     : undefined;
-  await mailTransport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  await sendOrderEmail({
     to: user.email,
     bcc: adminBcc,
     subject: `Rajendra Puja Store order received — ${order._id}`,
@@ -1019,8 +1062,8 @@ async function sendOrderConfirmation(order, user) {
 }
 
 async function sendOrderUpdateEmail(order, updateType) {
-  if (!mailTransport) {
-    console.error(`[ORDER] Status notification skipped; SMTP is not configured. Order ${order._id}`);
+  if (!mailTransport && !resendApiKey) {
+    console.error(`[ORDER] Status notification skipped; SMTP or Resend is not configured. Order ${order._id}`);
     return false;
   }
   if (!order.user?.email) {
@@ -1122,8 +1165,7 @@ async function sendOrderUpdateEmail(order, updateType) {
     </div>
   `;
 
-  await mailTransport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  await sendOrderEmail({
     to: order.user.email,
     subject: `Rajendra Puja Store ${isPaymentUpdate ? "payment" : "order"} update — ${statusLabel}`,
     text,
