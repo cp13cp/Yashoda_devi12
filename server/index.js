@@ -778,6 +778,9 @@ const mailTransport = process.env.SMTP_HOST
 
 const resendApiKey = process.env.RESEND_API_KEY?.trim() || "";
 const resendFrom = process.env.RESEND_FROM?.trim() || "";
+const adminNotificationEmail = process.env.ADMIN_NOTIFICATION_EMAIL?.trim()
+  || process.env.SMTP_USER?.trim()
+  || "";
 
 async function sendOtpEmail(email, code, purpose) {
   const subject = purpose === "verify_email"
@@ -864,6 +867,13 @@ async function sendOrderConfirmation(order, user) {
   if (!mailTransport) {
     console.log(`[ORDER] Email confirmation skipped; SMTP is not configured. Order ${order._id}`);
     return false;
+  }
+  if (!user?.email) {
+    console.error(`[ORDER] Customer confirmation skipped; customer email is unavailable. Order ${order._id}`);
+    return false;
+  }
+  if (!adminNotificationEmail) {
+    console.error(`[ORDER] Admin order notification skipped; set ADMIN_NOTIFICATION_EMAIL or SMTP_USER. Order ${order._id}`);
   }
 
   const formatOrderPrice = (amount) =>
@@ -993,9 +1003,14 @@ async function sendOrderConfirmation(order, user) {
     </div>
   `;
 
+  const adminBcc = adminNotificationEmail
+    && adminNotificationEmail.toLowerCase() !== user.email.toLowerCase()
+    ? adminNotificationEmail
+    : undefined;
   await mailTransport.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: user.email,
+    bcc: adminBcc,
     subject: `Rajendra Puja Store order received — ${order._id}`,
     text,
     html,
@@ -1042,6 +1057,17 @@ async function sendOrderUpdateEmail(order, updateType) {
     ? "Due on delivery"
     : PAYMENT_STATUS_LABELS[order.paymentStatus] || "Pending";
   const trackingUrl = "https://rajendrapujastore.in/#track-order";
+  const itemLines = order.items.map((item) =>
+    `- ${item.name}${item.category ? ` (${item.category})` : ""} | ${item.quantity} x ${formatOrderPrice(item.price)} = ${formatOrderPrice(item.price * item.quantity)}`
+  );
+  const itemRows = order.items.map((item) => `
+    <tr>
+      <td style="padding:10px;border-bottom:1px solid #e8e8df">${escapeHtml(item.name)}${item.category ? ` (${escapeHtml(item.category)})` : ""}</td>
+      <td style="padding:10px;border-bottom:1px solid #e8e8df;text-align:center">${item.quantity}</td>
+      <td style="padding:10px;border-bottom:1px solid #e8e8df;text-align:right">${formatOrderPrice(item.price)}</td>
+      <td style="padding:10px;border-bottom:1px solid #e8e8df;text-align:right">${formatOrderPrice(item.price * item.quantity)}</td>
+    </tr>
+  `).join("");
   const transactionLines = [];
   if (order.razorpayOrderId) transactionLines.push(`Razorpay order ID: ${order.razorpayOrderId}`);
   if (order.razorpayPaymentId) transactionLines.push(`Razorpay payment ID: ${order.razorpayPaymentId}`);
@@ -1057,6 +1083,9 @@ async function sendOrderUpdateEmail(order, updateType) {
     `Payment method: ${paymentMethod}`,
     `Payment status: ${paymentStatus}`,
     `Order total: ${formatOrderPrice(order.subtotal)}`,
+    "",
+    "ITEMS",
+    ...itemLines,
     ...transactionLines,
     "",
     "Thank you,",
@@ -1080,6 +1109,13 @@ async function sendOrderUpdateEmail(order, updateType) {
           ${order.razorpayPaymentId ? `<br>Razorpay payment ID: ${escapeHtml(order.razorpayPaymentId)}` : ""}
           ${order.utr ? `<br>UPI UTR / Reference: ${escapeHtml(order.utr)}` : ""}
         </div>
+        <h2 style="margin:22px 0 8px;font-size:16px">Items in this order</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#f3f5ef;color:#526455;text-align:left">
+            <th style="padding:10px">Product</th><th style="padding:10px;text-align:center">Qty</th><th style="padding:10px;text-align:right">Price</th><th style="padding:10px;text-align:right">Total</th>
+          </tr></thead>
+          <tbody>${itemRows}</tbody>
+        </table>
         <p><a href="${trackingUrl}" style="color:#365d43">Track your order</a></p>
         <p>Thank you,<br>Rajendra Puja Store</p>
       </div>
