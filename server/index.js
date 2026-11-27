@@ -775,21 +775,63 @@ const mailTransport = process.env.SMTP_HOST
     })
   : null;
 
+const resendApiKey = process.env.RESEND_API_KEY?.trim() || "";
+const resendFrom = process.env.RESEND_FROM?.trim() || "";
+
 async function sendOtpEmail(email, code, purpose) {
+  const subject = purpose === "verify_email"
+    ? "Verify your Rajendra Puja Store account"
+    : "Reset your Rajendra Puja Store password";
+  const text = `Your Rajendra Puja Store OTP is ${code}. It expires in 10 minutes.`;
+
+  if (resendApiKey) {
+    if (!resendFrom) {
+      console.error(`[OTP] ${purpose} email skipped; RESEND_FROM is not configured.`);
+      return false;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const emailResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ from: resendFrom, to: [email], subject, text }),
+        signal: controller.signal,
+      });
+      if (!emailResponse.ok) {
+        console.error(`[OTP] Resend could not send ${purpose} email (HTTP ${emailResponse.status}).`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error(`[OTP] Resend request failed for ${purpose} email:`, error.message);
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   if (!mailTransport) {
-    console.log(`[OTP] ${purpose} for ${email}: ${code}`);
+    console.error(`[OTP] ${purpose} email skipped; Resend or SMTP is not configured.`);
     return false;
   }
 
-  await mailTransport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: email,
-    subject: purpose === "verify_email"
-      ? "Verify your Rajendra Puja Store account"
-      : "Reset your Rajendra Puja Store password",
-    text: `Your Rajendra Puja Store OTP is ${code}. It expires in 10 minutes.`,
-  });
-  return true;
+  try {
+    await mailTransport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: email,
+      subject,
+      text,
+    });
+    return true;
+  } catch (error) {
+    console.error(`[OTP] Could not send ${purpose} email:`, error.message);
+    return false;
+  }
 }
 
 const ORDER_STATUS_LABELS = {
@@ -1057,6 +1099,13 @@ function hashOtp(code) {
   return createHash("sha256").update(code).digest("hex");
 }
 
+function normalizeIndianMobile(value) {
+  if (typeof value !== "string") return "";
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  if (!/^(?:\+?91)?[6-9]\d{9}$/.test(compact)) return "";
+  return `+91${compact.replace(/^\+?91/, "")}`;
+}
+
 async function createOtp(email, purpose) {
   const code = String(randomInt(100000, 1000000));
   await Otp.deleteMany({ email: email.toLowerCase(), purpose });
@@ -1260,6 +1309,7 @@ function validateImageSignature(file) {
 app.post("/api/user/register", async (request, response, next) => {
   try {
     const { name, email, password } = request.body || {};
+    const phone = normalizeIndianMobile(request.body?.phone);
     const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
     if (typeof name !== "string" || !name.trim() || name.trim().length > 80) {
       return response.status(400).json({ error: "Enter a valid name." });
@@ -1267,28 +1317,45 @@ app.post("/api/user/register", async (request, response, next) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 160) {
       return response.status(400).json({ error: "Enter a valid email address." });
     }
+    if (!phone) {
+      return response.status(400).json({ error: "Enter a valid Indian mobile number with 10 digits." });
+    }
     if (typeof password !== "string" || password.length < 8 || password.length > 72) {
       return response.status(400).json({ error: "Password must be 8 to 72 characters." });
     }
 
     let user = await User.findOne({ email: normalizedEmail });
-    if (user?.emailVerified) {
+    const isNewUser = !user;
+    if (user?.emailVerified || user?.phoneVerified) {
       return response.status(409).json({ error: "An account already exists with this email." });
+    }
+    const phoneOwner = await User.findOne({ phone });
+    if (phoneOwner && phoneOwner.email !== normalizedEmail) {
+      return response.status(409).json({ error: "An account already exists with this mobile number." });
     }
     if (!user) {
       user = await User.create({
         name: name.trim(),
         email: normalizedEmail,
+        phone,
         passwordHash: await bcrypt.hash(password, 12),
       });
     } else {
       user.name = name.trim();
+      user.phone = phone;
       user.passwordHash = await bcrypt.hash(password, 12);
       await user.save();
     }
 
     const code = await createOtp(normalizedEmail, "verify_email");
-    await sendOtpEmail(normalizedEmail, code, "verify_email");
+    const emailSent = await sendOtpEmail(normalizedEmail, code, "verify_email");
+    if (!emailSent) {
+      await Otp.deleteMany({ email: normalizedEmail, purpose: "verify_email" });
+      if (isNewUser) await User.deleteOne({ _id: user._id });
+      return response.status(503).json({
+        error: "We could not send the verification OTP to your email. Please try again later.",
+      });
+    }
     response.status(201).json({ requiresVerification: true, email: normalizedEmail });
   } catch (error) {
     next(error);
@@ -1330,9 +1397,13 @@ app.post("/api/user/login", async (request, response, next) => {
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       return response.status(401).json({ error: "Invalid email or password." });
     }
-    if (!user.emailVerified) {
+    if (!user.emailVerified && !user.phoneVerified) {
       const code = await createOtp(email, "verify_email");
-      await sendOtpEmail(email, code, "verify_email");
+      const emailSent = await sendOtpEmail(email, code, "verify_email");
+      if (!emailSent) {
+        await Otp.deleteMany({ email, purpose: "verify_email" });
+        return response.status(503).json({ error: "We could not send the verification OTP to your email. Please try again later." });
+      }
       return response.status(403).json({ error: "Verify your email first.", requiresVerification: true, email });
     }
 
@@ -1349,9 +1420,13 @@ app.post("/api/user/forgot-password", async (request, response, next) => {
     const user = await User.findOne({ email });
     if (user) {
       const code = await createOtp(email, "reset_password");
-      await sendOtpEmail(email, code, "reset_password");
+      const emailSent = await sendOtpEmail(email, code, "reset_password");
+      if (!emailSent) {
+        await Otp.deleteMany({ email, purpose: "reset_password" });
+        return response.status(503).json({ error: "We could not send the password reset OTP to your email. Please try again later." });
+      }
     }
-    response.json({ message: "If this email is registered, a reset OTP has been sent." });
+    response.json({ message: "If the email is registered, a reset OTP has been sent." });
   } catch (error) {
     next(error);
   }
@@ -1676,7 +1751,7 @@ app.get("/api/admin/dashboard", requireAdmin, async (_request, response, next) =
   try {
     const [productCount, customerEmails, orderCount, orders] = await Promise.all([
       Product.countDocuments(),
-      User.distinct("email", { emailVerified: true }),
+      User.distinct("email", { $or: [{ emailVerified: true }, { phoneVerified: true }] }),
       Order.countDocuments(),
       Order.find().populate("user", "name email").sort({ createdAt: -1 }).lean(),
     ]);

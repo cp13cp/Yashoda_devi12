@@ -523,7 +523,7 @@ function CartDrawer({ items, onClose, onChange, onPlaceOrder, onRequireAuth, isA
 
 function AuthDialog({ onClose, onAuthenticated }) {
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ name: "", email: "", password: "", otp: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", otp: "" });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -538,7 +538,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
         const result = await api("/api/user/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: form.name, email: form.email, password: form.password }),
+          body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone, password: form.password }),
         });
         setNotice("Verification OTP sent to your email.");
         setMode("verify");
@@ -598,6 +598,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === "signup" && <label>Full name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required maxLength={80} placeholder="Your name" /></label>}
+          {mode === "signup" && <label>Mobile number<input type="tel" inputMode="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required maxLength={18} placeholder="+91 98765 43210" /></label>}
           {(mode === "login" || mode === "signup" || mode === "forgot" || mode === "reset") && (
             <label>Email address<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required maxLength={160} placeholder="you@example.com" /></label>
           )}
@@ -605,7 +606,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
             <label>{mode === "reset" ? "New password" : "Password"}<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required minLength={8} maxLength={72} placeholder="At least 8 characters" /></label>
           )}
           {(mode === "verify" || mode === "reset") && (
-            <><label>Email address<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label><label>6-digit OTP<input inputMode="numeric" value={form.otp} onChange={(event) => setForm({ ...form, otp: event.target.value.replace(/\D/g, "").slice(0, 6) })} required pattern="[0-9]{6}" placeholder="000000" /></label></>
+            <><label>Email address<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label><label>6-digit email OTP<input inputMode="numeric" value={form.otp} onChange={(event) => setForm({ ...form, otp: event.target.value.replace(/\D/g, "").slice(0, 6) })} required pattern="[0-9]{6}" placeholder="000000" /></label></>
           )}
           {error && <p className="form-message" role="alert">{error}</p>}
           {notice && <p className="form-message success" role="status">{notice}</p>}
